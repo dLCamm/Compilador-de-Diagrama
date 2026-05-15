@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from conexion import procesar_json
+from conexion import procesar_json, procesar_lexico
 
 
 app = FastAPI(title="Backend Compilador de Diagrama")
@@ -23,3 +23,8 @@ def inicio():
 @app.post("/compilar")
 def compilar(data: dict):
     return procesar_json(data)
+
+
+@app.post("/lexico")
+def lexico(data: dict):
+    return procesar_lexico(data)
