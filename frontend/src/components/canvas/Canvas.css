@@ -1,0 +1,6 @@
+.DiagramCanvas {
+    display: flex;
+    flex-direction: row;
+    width: 70%;
+    gap: 20px;
+}
