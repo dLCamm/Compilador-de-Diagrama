@@ -1,2 +1,1 @@
-# Analizador semantico: variables, tipos y reglas del programa.
-
+# Analizador semantico: pendiente para una fase posterior.

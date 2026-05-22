@@ -74,14 +74,46 @@ def analizar_diagrama(data):
 
 
 def _obtener_texto_compilable(node_type, node_data):
+    # Acepta dos formatos:
+    # 1) data estructurado: variable/expression/code.
+    # 2) texto escrito dentro de la figura: "Leer edad", "Mostrar edad", "a > b".
     if node_type == "input":
         variable = node_data.get("variable")
         data_type = node_data.get("dataType", "int")
         if variable:
             return f"{data_type} {variable}"
-        return None
+        texto = _texto_figura(node_data)
+        partes = texto.split()
+        if len(partes) >= 2 and partes[0].lower() in {"leer", "input", "ingresar"}:
+            return f"{data_type} {partes[1]}"
+        return texto or None
 
-    if node_type in {"condition", "output", "process"}:
-        return node_data.get("expression")
+    if node_type == "condition":
+        texto = node_data.get("expression") or node_data.get("condition") or node_data.get("code")
+        if texto:
+            return texto
+        return _texto_figura(node_data).strip().lstrip("¿?").rstrip("?") or None
+
+    if node_type == "output":
+        texto = node_data.get("expression") or node_data.get("value") or node_data.get("code")
+        if texto:
+            return texto
+        texto = _texto_figura(node_data)
+        for prefijo in ("Mostrar ", "mostrar ", "Print ", "print ", "Imprimir ", "imprimir "):
+            if texto.startswith(prefijo):
+                return texto[len(prefijo):].strip()
+        return texto or None
+
+    if node_type == "process":
+        return node_data.get("expression") or node_data.get("code") or _texto_figura(node_data) or None
 
     return None
+
+
+def _texto_figura(node_data):
+    # Campo visual usado por el front cuando la figura solo guarda lo escrito por el usuario.
+    for key in ("text", "label", "value", "code", "expression"):
+        valor = node_data.get(key)
+        if valor is not None and str(valor).strip():
+            return str(valor).strip()
+    return ""
