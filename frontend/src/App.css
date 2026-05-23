@@ -29,6 +29,7 @@
   width: 30%;
   gap: 10px;
   background-color: #091413;
+  border-radius: 8px;
 }
 
 .titulo{

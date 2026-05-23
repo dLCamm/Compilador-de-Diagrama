@@ -6,10 +6,19 @@ export default function StartEndNode({ data }) {
     <div
       style={{
         padding: "15px 30px",
-        border: "2px solid black",
+        border: "3px solid var(--border-forma)",
         borderRadius: "50px",
-        background: "white",
-        textAlign: "center"
+        background: "var(--backr-forma)",
+        textAlign: "center",
+        color: "var(--border-forma)",
+        fontfamily: "Source Code Pro",
+        fontstyle: "normal",
+        fontWeight: "bold",
+        fontFamily: "Source Code Pro, monospace",
+        lineheight: "15px",
+        fontSize: "18px",
+
+
       }}
     >
 

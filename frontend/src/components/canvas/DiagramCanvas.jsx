@@ -1,7 +1,8 @@
-import {ReactFlow, Background,Controls,MiniMap,addEdge,useNodesState,useEdgesState} from "reactflow";
+import {ReactFlow, Background,Controls,MiniMap,addEdge,useNodesState,useEdgesState, applyNodeChanges, applyEdgeChanges} from "reactflow";
 import { v4 as uuid } from "uuid";
 import "reactflow/dist/style.css";
 import "./Canvas.css";
+import { sanitizeFlow } from "../../utils/sanitizeFlow";
 
 import { useCallback } from "react";
 
@@ -9,30 +10,77 @@ import ProcessNode from "../nodes/ProcessNode";
 import ConditionNode from "../nodes/ConditionNode";
 import StartEndNode from "../nodes/StartEndNode";
 import Toolbar from "../toolbar/Toolbar";
+import InputNode from "../nodes/InputNode";
+import OutputNode from "../nodes/OutputNode";
 
 const nodeTypes = {
   process: ProcessNode,
   condition: ConditionNode,
   start: StartEndNode,
-  end: StartEndNode
+  end: StartEndNode,
+  input: InputNode,
+  output: OutputNode
 };
 
 
-export default function DiagramCanvas() {
+export default function DiagramCanvas({nodes,setNodes,edges,setEdges}) {
 
-  const [nodes, setNodes, onNodesChange] =
-    useNodesState([]);
+    const onNodesChange = useCallback(
+        (changes) => {
 
-  const [edges, setEdges, onEdgesChange] =
-    useEdgesState([]);
+            setNodes((nds) =>
+            applyNodeChanges(changes, nds)
+            );
 
-  const onConnect = useCallback(
+        },
+
+        [setNodes]
+        );
+
+        const onEdgesChange = useCallback(
+        (changes) => {
+
+            setEdges((eds) =>
+            applyEdgeChanges(changes, eds)
+            );
+
+        },
+
+        [setEdges]
+        );
+
+  
+
+
+    const onConnect = useCallback(
     (params) => {
-        setEdges((eds) => addEdge(params, eds));
+
+        const label =
+        params.sourceHandle === "true"
+            ? "Sí"
+            : params.sourceHandle === "false"
+            ? "No"
+            : "";
+
+        const newEdge = {
+        ...params,
+
+        id: uuid(),
+
+        type: "control",
+
+        label
+        };
+
+        setEdges((eds) =>
+        addEdge(newEdge, eds)
+        );
     },
+
     [setEdges]
-);
-  const addNode = (type) => {
+    );
+
+    const addNode = (type) => {
 
     const newNode = {
         id: uuid(),
@@ -47,17 +95,41 @@ export default function DiagramCanvas() {
         data: {}
     };
 
+    const updateNodeData = (id, newData) => {
+
+        setNodes((nds) =>
+            nds.map((node) => {
+
+            if (node.id === id) {
+
+                return {
+                ...node,
+
+                data: {
+                    ...node.data,
+                    ...newData
+                }
+                };
+            }
+
+            return node;
+            })
+        );
+    };
+
     
 
     if (type === "process") {
         newNode.data = {
-        code: "nuevo proceso"
+        code: "",
+        updateNodeData
         };
     }
 
     if (type === "condition") {
         newNode.data = {
-        expression: "x > 0"
+        expression: "",
+        updateNodeData
         };
     }
 
@@ -70,6 +142,20 @@ export default function DiagramCanvas() {
     if (type === "end") {
         newNode.data = {
         label: "Fin"
+        };
+    }
+
+    if (type === "input") {
+        newNode.data = {
+        variable: "",
+        updateNodeData
+        };
+    }
+
+    if (type === "output") {
+        newNode.data = {    
+        expression : "",
+        updateNodeData
         };
     }
 

@@ -4,3 +4,9 @@
     width: 70%;
     gap: 20px;
 }
+
+.react-flow__edge-path {
+    stroke-width: 3px !important;
+    stroke: var(--border-forma) !important;
+}
+

@@ -5,7 +5,8 @@
   --bg: #fff;
   --border: #e5e4e7;
   --code-bg: #f4f3ec;
-  --accent: #aa3bff;
+  --border-forma: #486C85;
+  --backr-forma: #CBCCD7;
   --accent-bg: rgba(170, 59, 255, 0.1);
   --accent-border: rgba(170, 59, 255, 0.5);
   --social-bg: rgba(244, 243, 236, 0.5);
@@ -29,6 +30,11 @@
   @media (max-width: 1024px) {
     font-size: 16px;
   }
+}
+.react-flow__node {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
 @media (prefers-color-scheme: dark) {

@@ -4,20 +4,34 @@ export default function Toolbar({ addNode }) {
   return (
     <div className="toolbar">
 
-      <button onClick={() => addNode("start")}>
+      <button className="button_inicio_fin" onClick={() => addNode("start")}>
         Inicio
       </button>
 
-      <button onClick={() => addNode("process")}>
+      <button className="button_inicio_fin" onClick={() => addNode("end")}>
+        Fin
+      </button>
+
+      <button className="button_proceso" onClick={() => addNode("process")}>
         Proceso
       </button>
 
-      <button onClick={() => addNode("condition")}>
-        Condición
+      <button className="button_condicion" onClick={() => addNode("condition")}>
+        <div style={{ transform: "rotate(315deg)", fontSize: "18px" }}>
+          Condición
+        </div>
       </button>
 
-      <button onClick={() => addNode("end")}>
-        Fin
+      <button className="button_entrada_salida" onClick={() => addNode("input")}>
+        <div style={{ transform: "skewX(20deg)" }}>
+          Entrada
+        </div>
+      </button>
+
+      <button className="button_entrada_salida" onClick={() => addNode("output")}>
+        <div style={{ transform: "skewX(20deg)" }}>
+          Salida
+        </div>
       </button>
 
     </div>

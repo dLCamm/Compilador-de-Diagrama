@@ -1,15 +1,26 @@
 import { Handle, Position } from "reactflow";
 
-export default function ProcessNode({ data }) {
+export default function ProcessNode({id, data }) {
 
   return (
     <div
       style={{
         padding: 15,
-        border: "2px solid black",
-        background: "white",
+        border: "3px solid var(--border-forma)",
+        background: "var(--backr-forma)",
         minWidth: 120,
-        textAlign: "center"
+        textAlign: "center",
+        color: "var(--border-forma)",
+        fontWeight: "bold",
+        fontFamily: "Source Code Pro, monospace",
+        lineheight: "15px",
+        fontSize: "18px",
+        borderRadius: "5px",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+       
+        
       }}
     >
 
@@ -18,7 +29,38 @@ export default function ProcessNode({ data }) {
         position={Position.Top}
       />
 
-      {data.code}
+      <textarea
+      rows={1}
+
+        value={data.code}
+
+        onChange={(e) => {
+
+          data.updateNodeData(id, {
+            code: e.target.value
+          });
+
+        }}
+
+
+
+        style={{
+          border: "none",
+          outline: "none",
+          resize: "none",
+          width: "100%",
+      
+          background: "transparent",
+          textAlign: "center",
+          color: "var(--border-forma)",
+          fontWeight: "bold",
+          fontFamily: "Source Code Pro, monospace",
+          lineheight: "15px",
+          fontSize: "18px",
+          spellcheck: "false",
+    
+        }}
+      />
 
       <Handle
         type="source"
