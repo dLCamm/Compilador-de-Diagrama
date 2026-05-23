@@ -1,0 +1,234 @@
+@import url('https://fonts.googleapis.com/css2?family=Staatliches&family=Share+Tech+Mono&display=swap');
+
+/* ── Contenedor principal ── */
+.code-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: 'Staatliches', system-ui, sans-serif;
+  background: #0e1318;
+  gap: 8px;
+  padding: 8px;
+}
+
+/* ══ VENTANA CÓDIGO ══ */
+.code-window {
+  background: #131a20;
+  display: flex;
+  flex-direction: column;
+  flex: 1.3;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #2a3a45;
+  border-radius: 4px;
+}
+
+.code-window-header {
+  display: flex;
+  align-items: stretch;
+  background: #0e1318;
+  border-bottom: 1px solid #2a3a45;
+  flex-shrink: 0;
+  justify-content: center;
+}
+
+.tab-btn {
+  font-family: 'Staatliches', system-ui, sans-serif;
+  font-size: 15px;
+  letter-spacing: 0.15em;
+  padding: 7px 36px;
+  border: none;
+  cursor: pointer;
+  background: transparent;
+  color: #4a6070;
+  text-transform: uppercase;
+  position: relative;
+  transition: color 0.15s;
+}
+
+.tab-btn:hover { color: #8ab0c0; }
+
+.tab-btn.active {
+  color: #c8dce8;
+}
+
+.tab-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0; right: 0;
+  height: 2px;
+  background: #2ea87e;
+}
+
+/* ── Cuerpo del código ── */
+.code-body {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  padding: 10px 14px;
+  scrollbar-width: thin;
+  scrollbar-color: #2a3a45 transparent;
+}
+
+.code-body::-webkit-scrollbar       { width: 3px; }
+.code-body::-webkit-scrollbar-track { background: transparent; }
+.code-body::-webkit-scrollbar-thumb { background: #2a3a45; border-radius: 2px; }
+
+.code-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 10px;
+  color: #2a3a45;
+  font-family: 'Staatliches', system-ui, sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.1em;
+  text-align: center;
+  padding: 0 20px;
+}
+
+.code-empty svg { opacity: 0.2; }
+
+.line-row {
+  display: flex;
+  align-items: flex-start;
+}
+
+.line-code {
+  flex: 1;
+  font-size: 11.5px;
+  line-height: 1.7;
+  white-space: pre;
+  font-family: 'Share Tech Mono', monospace;
+  color: #b8ccd8;
+}
+
+/* Syntax — comentarios únicamente diferenciados */
+.cmt     { color: #3d5a6e; font-style: italic; }
+.asm-cmt { color: #3d5a6e; font-style: italic; }
+
+/* ══ VENTANA ECHO ══ */
+.echo-window {
+  background: #0a0f14;
+  display: flex;
+  flex-direction: column;
+  flex: 0.85;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #2a3a45;
+  border-radius: 4px;
+}
+
+.echo-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 14px;
+  border-bottom: 1px solid #1a2530;
+  flex-shrink: 0;
+}
+
+.echo-title {
+  font-family: 'Staatliches', system-ui, sans-serif;
+  font-size: 15px;
+  letter-spacing: 0.3em;
+  color: #4a6070;
+  text-transform: uppercase;
+  flex: 1;
+  text-align: center;
+}
+
+.echo-body {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  padding: 8px 12px;
+  scrollbar-width: thin;
+  scrollbar-color: #1f2d38 transparent;
+}
+
+.echo-body::-webkit-scrollbar       { width: 3px; }
+.echo-body::-webkit-scrollbar-thumb { background: #1f2d38; border-radius: 2px; }
+
+.echo-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #1f2d38;
+  font-family: 'Staatliches', system-ui, sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}
+
+.echo-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 1px 0;
+  font-size: 11px;
+  line-height: 1.6;
+  animation: fadeInLine 0.15s ease;
+}
+
+@keyframes fadeInLine {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.echo-prefix {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 10.5px;
+  flex-shrink: 0;
+  min-width: 16px;
+}
+
+.echo-prefix.info { color: #3d5a6e; }
+.echo-prefix.ok   { color: #2ea87e; }
+.echo-prefix.err  { color: #c04040; }
+.echo-prefix.step { color: #3d5a6e; }
+
+.echo-text {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px;
+  flex: 1;
+}
+
+.echo-text.info { color: #4a6a7a; }
+.echo-text.ok   { color: #4a6a7a; }
+.echo-text.err  { color: #c04040; }
+.echo-text.step { color: #4a6a7a; }
+
+/* Cursor parpadeante (estado loading/running) */
+.cursor-blink {
+  display: inline-block;
+  width: 6px;
+  height: 11px;
+  background: #3d5a6e;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: blink 1.1s step-end infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+/* Spinner (estado loading) */
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #1f2d38;
+  border-top-color: #2ea87e;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
