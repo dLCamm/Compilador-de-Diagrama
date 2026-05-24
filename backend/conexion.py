@@ -205,7 +205,16 @@ def _guardar_ultimo_echo(echo):
 def _mensaje_error_usuario(error, data):
     mensaje = str(error)
     for node_id, nombre in _mapa_nombres_figuras(data).items():
-        mensaje = mensaje.replace(node_id, nombre)
+        reemplazos = {
+            f"nodo '{node_id}'": f"figura '{nombre}'",
+            f"nodo {node_id}": f"figura '{nombre}'",
+            f"Nodo '{node_id}'": f"Figura '{nombre}'",
+            f"Nodo {node_id}": f"Figura '{nombre}'",
+            f"condicion '{node_id}'": f"condicion '{nombre}'",
+            f"'{node_id}'": f"'{nombre}'" if len(node_id) > 12 else f"'{node_id}'",
+        }
+        for original, reemplazo in reemplazos.items():
+            mensaje = mensaje.replace(original, reemplazo)
     return mensaje.replace("nodo", "figura").replace("Nodo", "Figura")
 
 

@@ -157,6 +157,15 @@ class AnalizadorSemantico:
         }
 
     def visitar_NodoEntrada(self, nodo):
+        if not nodo.tipo[1]:
+            try:
+                return self.tabla_simbolos.obtener_tipo_variable(nodo.nombre[1], self.contexto_figura)
+            except ErrorSemantico:
+                raise ErrorSemantico(
+                    f"La entrada '{self.contexto_figura}' no tiene tipo y la variable '{nodo.nombre[1]}' todavia no existe. "
+                    f"Si es la primera vez que la lees, escribe el tipo: int {nodo.nombre[1]}."
+                )
+
         self.tabla_simbolos.declarar_variable(nodo.nombre[1], nodo.tipo[1], self.contexto_figura)
         return nodo.tipo[1]
 

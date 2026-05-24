@@ -10,7 +10,7 @@ class ErrorLexico(Exception):
 # Patrones base inspirados en el analizador lexico de referencia.
 # El orden importa: los operadores de dos caracteres deben evaluarse primero.
 TOKEN_PATRONES = [
-    ("KEYWORD", r"\b(if|else|while|return|int|float|void|bool|string|print|printf|println|for|true|false)\b"),
+    ("KEYWORD", r"\b(if|else|while|return|int|float|double|void|bool|string|print|printf|println|for|true|false)\b"),
     ("STRING", r'"([^"\\]|\\.)*"'),
     ("NUMBER", r"\b\d+(\.\d+)?\b"),
     ("OPERATOR", r"==|!=|<=|>=|\+\+|--|&&|\|\||[+\-*/%=<>!]"),

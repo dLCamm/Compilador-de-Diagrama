@@ -33,6 +33,7 @@ export default function ProcessNode({id, data }) {
           "variable++",
           "variable--",
           "Tipos: int, float, double, bool, string",
+          "Si ya existe la variable, puedes usar solo variable",
         ]}
       />
 
@@ -41,9 +42,9 @@ export default function ProcessNode({id, data }) {
         position={Position.Top}
       />
 
-      <textarea
+      <input
         className="node-field"
-      rows={1}
+        spellCheck="false"
 
         value={data.code}
         placeholder="Proceso"
@@ -61,8 +62,8 @@ export default function ProcessNode({id, data }) {
         style={{
           border: "none",
           outline: "none",
-          resize: "none",
           width: "100%",
+          height: "24px",
       
           background: "transparent",
           textAlign: "center",
@@ -71,7 +72,6 @@ export default function ProcessNode({id, data }) {
           fontFamily: "Source Code Pro, monospace",
           lineheight: "15px",
           fontSize: "18px",
-          spellcheck: "false",
     
         }}
       />

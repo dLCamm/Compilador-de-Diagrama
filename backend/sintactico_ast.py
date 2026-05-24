@@ -49,11 +49,198 @@ def _formato_printf(nodo):
     if isinstance(nodo, NodoCadena):
         return None
     if isinstance(nodo, NodoNumero):
-        return "%f" if "." in nodo.valor[1] else "%d"
+        return "%g" if "." in nodo.valor[1] else "%d"
     if isinstance(nodo, NodoIdentificador):
         tipo = NodoAST.tipos_variables.get(nodo.nombre[1], "int")
-        return "%s" if tipo == "string" else "%f" if tipo in {"float", "double"} else "%d"
+        return "%s" if tipo == "string" else "%g" if tipo in {"float", "double"} else "%d"
     return "%d"
+
+ASM_STRING_SIZE = 256
+
+ASM_BUILTINS = {
+    "len", "strlen", "length",
+    "abs", "sqrt", "sin", "cos",
+    "int", "float", "double",
+    "max", "min",
+    "concat",
+}
+
+
+def _literal_python(cadena_token):
+    import ast as _ast
+    try:
+        return str(_ast.literal_eval(cadena_token))
+    except Exception:
+        texto = str(cadena_token)
+        if len(texto) >= 2 and texto[0] == '"' and texto[-1] == '"':
+            return texto[1:-1]
+        return texto
+
+
+def _db_string(cadena_token):
+    texto = _literal_python(cadena_token)
+    partes = []
+    actual = []
+
+    for ch in texto:
+        codigo = ord(ch)
+        if ch == '"':
+            actual.append('\\"')
+        elif ch == "\\":
+            actual.append('\\\\')
+        elif 32 <= codigo <= 126:
+            actual.append(ch)
+        else:
+            if actual:
+                partes.append('"' + ''.join(actual) + '"')
+                actual = []
+            partes.append(str(codigo))
+
+    if actual:
+        partes.append('"' + ''.join(actual) + '"')
+
+    partes.append("0")
+    return ", ".join(partes)
+
+
+def _es_float_literal(texto):
+    texto = str(texto).lower()
+    return "." in texto or "e" in texto
+
+
+def _es_tipo_float(tipo):
+    return tipo in {"float", "double"}
+
+
+def _tam_tipo_float(tipo):
+    return "dword" if tipo == "float" else "qword"
+
+
+def _tipo_variable(nombre):
+    return NodoAST.tipos_variables.get(nombre, "int")
+
+
+def _tipo_expr(nodo):
+    if isinstance(nodo, NodoCadena):
+        return "string"
+
+    if isinstance(nodo, NodoBooleano):
+        return "bool"
+
+    if isinstance(nodo, NodoNumero):
+        return "double" if _es_float_literal(nodo.valor[1]) else "int"
+
+    if isinstance(nodo, NodoIdentificador):
+        return _tipo_variable(nodo.nombre[1])
+
+    if isinstance(nodo, NodoUnario):
+        if nodo.operador[1] == "!":
+            return "bool"
+        return _tipo_expr(nodo.expresion)
+
+    if isinstance(nodo, NodoOperacion):
+        op = nodo.operador[1]
+
+        if op in {">", "<", ">=", "<=", "==", "!=", "&&", "||"}:
+            return "bool"
+
+        ti = _tipo_expr(nodo.izquierda)
+        td = _tipo_expr(nodo.derecha)
+
+        if ti == "string" or td == "string":
+            return "string" if op == "+" else "bool"
+
+        if ti == "double" or td == "double":
+            return "double"
+
+        if ti == "float" or td == "float":
+            return "float"
+
+        return "int"
+
+    if isinstance(nodo, NodoLlamadaFuncion):
+        nombre = nodo.nombre_funcion
+
+        if nombre in {"len", "strlen", "length", "int"}:
+            return "int"
+
+        if nombre in {"sqrt", "sin", "cos", "float", "double"}:
+            return "double"
+
+        if nombre == "concat":
+            return "string"
+
+        if nombre == "abs" and nodo.argumentos:
+            return _tipo_expr(nodo.argumentos[0])
+        
+        if nombre in {"max", "min"} and len(nodo.argumentos) >= 2:
+            tipo_a = _tipo_expr(nodo.argumentos[0])
+            tipo_b = _tipo_expr(nodo.argumentos[1])
+
+            if tipo_a == "double" or tipo_b == "double":
+                return "double"
+
+            if tipo_a == "float" or tipo_b == "float":
+                return "float"
+
+            return "int"
+
+    return "int"
+
+
+def _gen_float(nodo):
+    metodo = getattr(nodo, "generarCodigoFloat", None)
+    if metodo:
+        return metodo()
+
+    return "\n".join([
+        nodo.generarCodigo(),
+        "    mov [tmp_int], eax",
+        "    fild dword [tmp_int]",
+    ])
+
+
+def _gen_bool(nodo):
+    tipo = _tipo_expr(nodo)
+
+    if tipo == "string":
+        return "\n".join([
+            nodo.generarCodigo(),
+            "    mov esi, eax",
+            "    call str_len",
+            "    cmp eax, 0",
+            "    setne al",
+            "    movzx eax, al",
+        ])
+
+    if tipo in {"float", "double"}:
+        return "\n".join([
+            _gen_float(nodo),
+            "    ftst",
+            "    fstsw ax",
+            "    sahf",
+            "    fstp st0",
+            "    setne al",
+            "    movzx eax, al",
+        ])
+
+    return nodo.generarCodigo()
+
+
+def _collect_expr_calls(nodo, llamadas):
+    if isinstance(nodo, NodoLlamadaFuncion):
+        if nodo.nombre_funcion not in ASM_BUILTINS:
+            llamadas.add(nodo.nombre_funcion)
+
+        for arg in nodo.argumentos:
+            _collect_expr_calls(arg, llamadas)
+
+    elif isinstance(nodo, NodoOperacion):
+        _collect_expr_calls(nodo.izquierda, llamadas)
+        _collect_expr_calls(nodo.derecha, llamadas)
+
+    elif isinstance(nodo, NodoUnario):
+        _collect_expr_calls(nodo.expresion, llamadas)
 
 
 class NodoAST:
@@ -111,24 +298,186 @@ class NodoPrograma(NodoAST):
         ])
 
     def generarCodigo(self):
-        # Estructura base del assembler siguiendo el ejemplo de referencia.
         NodoAST.contador_etiquetas = 0
         self.variables = self._recolectar_variables(self.instrucciones)
-        data = ["section .data", "    newline: db 10", "    dot: db '.'"]
-        bss = ["section .bss", "    print_buffer: resb 32"]
-        for tipo, nombre in self.variables:
-            if tipo in ("int", "float", "double", "bool"):
-                bss.append(f"    {nombre}:    resd 1")
+        NodoAST.tipos_variables = {nombre: tipo for tipo, nombre in self.variables}
 
-        codigo = ["section .text", "global _start", "_start:"]
-        codigo.extend(i.generarCodigo() for i in self.instrucciones if not isinstance(i, NodoFin))
-        codigo.extend([
-            "    ; terminar programa",
-            "    mov eax, 1",
-            "    mov ebx, 0",
-            "    int 0x80",
-        ])
-        return "\n".join(data + bss + codigo)
+        self.cadenas = {}
+        self.constantes_float = {}
+        self.llamadas_externas = set()
+
+        self._recolectar_constantes(
+            self.instrucciones,
+            self.cadenas,
+            self.constantes_float
+        )
+
+        self._recolectar_llamadas(
+            self.instrucciones,
+            self.llamadas_externas
+        )
+
+        data = [
+            "section .data",
+            "    newline: db 10",
+            "    space_chr: db 32",
+            "    const_10: dq 10.0",
+            "    const_round: dq 0.0000005",
+            "    fpu_cw_trunc: dw 0",
+        ]
+
+        for etiqueta, valor in self.cadenas.items():
+            data.append(f"    {etiqueta}: db {_db_string(valor)}")
+
+        for etiqueta, valor in self.constantes_float.items():
+            data.append(f"    {etiqueta}: dq {valor}")
+
+        bss = [
+            "section .bss",
+            "    print_buffer: resb 128",
+            "    input_buffer: resb 256",
+            "    string_temp: resb 256",
+            "    string_temp2: resb 256",
+            "    tmp_int: resd 1",
+            "    tmp_divisor: resd 1",
+            "    fpu_cw: resw 1",
+        ]
+
+        for tipo, nombre in self.variables:
+            if tipo in ("int", "bool"):
+                bss.append(f"    {nombre}: resd 1")
+            elif tipo == "float":
+                bss.append(f"    {nombre}: resd 1")
+            elif tipo == "double":
+                bss.append(f"    {nombre}: resq 1")
+            elif tipo == "string":
+                bss.append(f"    {nombre}: resb {ASM_STRING_SIZE}")
+            else:
+                bss.append(f"    {nombre}: resd 1")
+
+        text_header = [
+            "section .text",
+            "global _start",
+        ]
+
+        for nombre in sorted(self.llamadas_externas):
+            text_header.append(f"extern {nombre}")
+
+        text_header.append("_start:")
+
+        codigo = text_header
+
+        codigo.extend(
+            i.generarCodigo()
+            for i in self.instrucciones
+            if not isinstance(i, NodoFin)
+        )
+
+        codigo.extend(self._runtime_asm())
+
+        return "\n".join(data + [""] + bss + [""] + codigo)
+
+    def _obtener_etiqueta_cadena(self, valor, cadenas):
+        for etiqueta, existente in cadenas.items():
+            if existente == valor:
+                return etiqueta
+
+        etiqueta = f"str_{len(cadenas)}"
+        cadenas[etiqueta] = valor
+        return etiqueta
+
+
+    def _obtener_etiqueta_float(self, valor, constantes_float):
+        for etiqueta, existente in constantes_float.items():
+            if existente == valor:
+                return etiqueta
+
+        etiqueta = f"flt_{len(constantes_float)}"
+        constantes_float[etiqueta] = valor
+        return etiqueta
+
+
+    def _recolectar_constantes(self, instrucciones, cadenas, constantes_float):
+        for inst in instrucciones:
+            if isinstance(inst, NodoEntrada) and inst.prompt:
+                self._recolectar_constantes_expr(inst.prompt, cadenas, constantes_float)
+
+            if isinstance(inst, NodoPrint):
+                for arg in inst.argumentos:
+                    self._recolectar_constantes_expr(arg, cadenas, constantes_float)
+
+            elif isinstance(inst, NodoIf):
+                self._recolectar_constantes_expr(inst.condicion, cadenas, constantes_float)
+                self._recolectar_constantes(inst.cuerpo, cadenas, constantes_float)
+                self._recolectar_constantes(inst.sino, cadenas, constantes_float)
+
+            elif isinstance(inst, NodoWhile):
+                self._recolectar_constantes_expr(inst.condicion, cadenas, constantes_float)
+                self._recolectar_constantes(inst.cuerpo, cadenas, constantes_float)
+
+            elif isinstance(inst, NodoFor):
+                self._recolectar_constantes([inst.init], cadenas, constantes_float)
+                self._recolectar_constantes_expr(inst.condicion, cadenas, constantes_float)
+                self._recolectar_constantes([inst.incremento], cadenas, constantes_float)
+                self._recolectar_constantes(inst.cuerpo, cadenas, constantes_float)
+
+            elif isinstance(inst, NodoAsignacion):
+                self._recolectar_constantes_expr(inst.expresion, cadenas, constantes_float)
+
+            elif isinstance(inst, NodoExpresionSentencia):
+                self._recolectar_constantes_expr(inst.expresion, cadenas, constantes_float)
+
+    def _recolectar_constantes_expr(self, nodo, cadenas, constantes_float):
+        if isinstance(nodo, NodoCadena):
+            nodo.etiqueta = self._obtener_etiqueta_cadena(nodo.valor[1], cadenas)
+
+        elif isinstance(nodo, NodoNumero):
+            if _es_float_literal(nodo.valor[1]):
+                nodo.etiqueta_float = self._obtener_etiqueta_float(
+                    nodo.valor[1],
+                    constantes_float
+                )
+
+        elif isinstance(nodo, NodoOperacion):
+            self._recolectar_constantes_expr(nodo.izquierda, cadenas, constantes_float)
+            self._recolectar_constantes_expr(nodo.derecha, cadenas, constantes_float)
+
+        elif isinstance(nodo, NodoUnario):
+            self._recolectar_constantes_expr(nodo.expresion, cadenas, constantes_float)
+
+        elif isinstance(nodo, NodoLlamadaFuncion):
+            for arg in nodo.argumentos:
+                self._recolectar_constantes_expr(arg, cadenas, constantes_float)
+
+    def _recolectar_cadenas(self, instrucciones, cadenas):
+        self._recolectar_constantes(instrucciones, cadenas, {})
+
+    def _recolectar_llamadas(self, instrucciones, llamadas):
+        for inst in instrucciones:
+            if isinstance(inst, NodoPrint):
+                for arg in inst.argumentos:
+                    _collect_expr_calls(arg, llamadas)
+
+            elif isinstance(inst, NodoAsignacion):
+                _collect_expr_calls(inst.expresion, llamadas)
+
+            elif isinstance(inst, NodoExpresionSentencia):
+                _collect_expr_calls(inst.expresion, llamadas)
+
+            elif isinstance(inst, NodoIf):
+                _collect_expr_calls(inst.condicion, llamadas)
+                self._recolectar_llamadas(inst.cuerpo, llamadas)
+                self._recolectar_llamadas(inst.sino, llamadas)
+
+            elif isinstance(inst, NodoWhile):
+                _collect_expr_calls(inst.condicion, llamadas)
+                self._recolectar_llamadas(inst.cuerpo, llamadas)
+
+            elif isinstance(inst, NodoFor):
+                self._recolectar_llamadas([inst.init], llamadas)
+                _collect_expr_calls(inst.condicion, llamadas)
+                self._recolectar_llamadas([inst.incremento], llamadas)
+                self._recolectar_llamadas(inst.cuerpo, llamadas)
 
     def serializar(self):
         return {
@@ -151,10 +500,11 @@ class NodoPrograma(NodoAST):
         while pendientes:
             instruccion = pendientes.pop(0)
             if isinstance(instruccion, NodoEntrada):
-                variable = (instruccion.tipo[1], instruccion.nombre[1])
-                if variable not in vistas:
-                    variables.append(variable)
-                    vistas.add(variable)
+                if instruccion.tipo[1]:
+                    variable = (instruccion.tipo[1], instruccion.nombre[1])
+                    if variable not in vistas:
+                        variables.append(variable)
+                        vistas.add(variable)
             elif isinstance(instruccion, NodoAsignacion) and instruccion.tipo is not None:
                 variable = (instruccion.tipo[1], instruccion.nombre[1])
                 if variable not in vistas:
@@ -171,31 +521,449 @@ class NodoPrograma(NodoAST):
                 pendientes.extend(instruccion.cuerpo)
         return variables
 
+    def _runtime_asm(self):
+        return [
+            "",
+            "    ; terminar programa",
+            "    mov eax, 1",
+            "    mov ebx, 0",
+            "    int 0x80",
+
+            "",
+            "; ---- int_to_str: eax=numero, esi=buffer -> eax=longitud, esi=fin ----",
+            "int_to_str:",
+            "    push ebx",
+            "    push ecx",
+            "    push edx",
+            "    push edi",
+            "    mov edi, esi",
+            "    xor ecx, ecx",
+            "    mov ebx, 10",
+            "    cmp eax, 0",
+            "    jne .its_check_sign",
+            "    mov byte [esi], '0'",
+            "    inc esi",
+            "    mov eax, 1",
+            "    jmp .its_ret",
+            ".its_check_sign:",
+            "    cmp eax, 0",
+            "    jge .its_loop",
+            "    mov byte [esi], '-'",
+            "    inc esi",
+            "    neg eax",
+            ".its_loop:",
+            "    xor edx, edx",
+            "    div ebx",
+            "    push edx",
+            "    inc ecx",
+            "    cmp eax, 0",
+            "    jne .its_loop",
+            ".its_pop:",
+            "    pop edx",
+            "    add dl, '0'",
+            "    mov [esi], dl",
+            "    inc esi",
+            "    loop .its_pop",
+            "    mov eax, esi",
+            "    sub eax, edi",
+            ".its_ret:",
+            "    pop edi",
+            "    pop edx",
+            "    pop ecx",
+            "    pop ebx",
+            "    ret",
+
+            "",
+            "; ---- str_to_int: esi=buffer -> eax=numero ----",
+            "str_to_int:",
+            "    push ebx",
+            "    push ecx",
+            "    push edx",
+            "    xor eax, eax",
+            "    xor ecx, ecx",
+            ".sti_skip:",
+            "    mov bl, [esi]",
+            "    cmp bl, ' '",
+            "    je .sti_advance",
+            "    cmp bl, 9",
+            "    jne .sti_sign",
+            ".sti_advance:",
+            "    inc esi",
+            "    jmp .sti_skip",
+            ".sti_sign:",
+            "    xor edx, edx",
+            "    cmp bl, '-'",
+            "    jne .sti_digit",
+            "    mov edx, 1",
+            "    inc esi",
+            ".sti_digit:",
+            "    mov bl, [esi]",
+            "    cmp bl, '0'",
+            "    jb .sti_done",
+            "    cmp bl, '9'",
+            "    ja .sti_done",
+            "    sub bl, '0'",
+            "    imul eax, eax, 10",
+            "    movzx ecx, bl",
+            "    add eax, ecx",
+            "    inc esi",
+            "    jmp .sti_digit",
+            ".sti_done:",
+            "    cmp edx, 0",
+            "    je .sti_ret",
+            "    neg eax",
+            ".sti_ret:",
+            "    pop edx",
+            "    pop ecx",
+            "    pop ebx",
+            "    ret",
+
+            "",
+            "; ---- str_to_double: esi=buffer -> ST0=numero ----",
+            "str_to_double:",
+            "    push eax",
+            "    push ebx",
+            "    push ecx",
+            "    push edx",
+            "    push edi",
+            "    fldz",
+            "    xor edi, edi",
+            ".std_skip:",
+            "    mov bl, [esi]",
+            "    cmp bl, ' '",
+            "    je .std_skip_inc",
+            "    cmp bl, 9",
+            "    jne .std_sign",
+            ".std_skip_inc:",
+            "    inc esi",
+            "    jmp .std_skip",
+            ".std_sign:",
+            "    cmp bl, '-'",
+            "    jne .std_int",
+            "    mov edi, 1",
+            "    inc esi",
+            ".std_int:",
+            "    mov bl, [esi]",
+            "    cmp bl, '0'",
+            "    jb .std_frac_check",
+            "    cmp bl, '9'",
+            "    ja .std_frac_check",
+            "    fld qword [const_10]",
+            "    fmulp st1, st0",
+            "    movzx eax, bl",
+            "    sub eax, '0'",
+            "    mov [tmp_int], eax",
+            "    fiadd dword [tmp_int]",
+            "    inc esi",
+            "    jmp .std_int",
+            ".std_frac_check:",
+            "    cmp bl, '.'",
+            "    jne .std_apply_sign",
+            "    inc esi",
+            "    mov dword [tmp_divisor], 10",
+            ".std_frac:",
+            "    mov bl, [esi]",
+            "    cmp bl, '0'",
+            "    jb .std_apply_sign",
+            "    cmp bl, '9'",
+            "    ja .std_apply_sign",
+            "    movzx eax, bl",
+            "    sub eax, '0'",
+            "    mov [tmp_int], eax",
+            "    fild dword [tmp_int]",
+            "    fidiv dword [tmp_divisor]",
+            "    faddp st1, st0",
+            "    mov eax, [tmp_divisor]",
+            "    imul eax, eax, 10",
+            "    mov [tmp_divisor], eax",
+            "    inc esi",
+            "    jmp .std_frac",
+            ".std_apply_sign:",
+            "    cmp edi, 0",
+            "    je .std_ret",
+            "    fchs",
+            ".std_ret:",
+            "    pop edi",
+            "    pop edx",
+            "    pop ecx",
+            "    pop ebx",
+            "    pop eax",
+            "    ret",
+
+            "",
+            "; ---- double_to_str: ST0=numero, esi=buffer -> eax=longitud ----",
+            "double_to_str:",
+            "    push ebx",
+            "    push ecx",
+            "    push edx",
+            "    push edi",
+            "    fnstcw [fpu_cw]",
+            "    mov ax, [fpu_cw]",
+            "    and ax, 0xF3FF",
+            "    or ax, 0x0C00",
+            "    mov [fpu_cw_trunc], ax",
+            "    fldcw [fpu_cw_trunc]",
+            "    mov edi, esi",
+            "    ftst",
+            "    fstsw ax",
+            "    sahf",
+            "    jae .dts_positive",
+            "    mov byte [esi], '-'",
+            "    inc esi",
+            "    fchs",
+            ".dts_positive:",
+            "    fadd qword [const_round]",
+            "    fld st0",
+            "    fistp dword [tmp_int]",
+            "    mov eax, [tmp_int]",
+            "    call int_to_str",
+            "    fisub dword [tmp_int]",
+            "    mov byte [esi], '.'",
+            "    inc esi",
+            "    mov ecx, 6",
+            ".dts_frac_loop:",
+            "    fld qword [const_10]",
+            "    fmulp st1, st0",
+            "    fld st0",
+            "    fistp dword [tmp_int]",
+            "    mov eax, [tmp_int]",
+            "    add al, '0'",
+            "    mov [esi], al",
+            "    inc esi",
+            "    fisub dword [tmp_int]",
+            "    loop .dts_frac_loop",
+            "    fstp st0",
+            "    mov ebx, esi",
+            "    dec ebx",
+            ".dts_trim_zero:",
+            "    cmp byte [ebx], '0'",
+            "    jne .dts_trim_dot",
+            "    dec esi",
+            "    dec ebx",
+            "    jmp .dts_trim_zero",
+            ".dts_trim_dot:",
+            "    cmp byte [ebx], '.'",
+            "    jne .dts_trim_done",
+            "    dec esi",
+            ".dts_trim_done:",
+            "    fldcw [fpu_cw]",
+            "    mov eax, esi",
+            "    sub eax, edi",
+            "    pop edi",
+            "    pop edx",
+            "    pop ecx",
+            "    pop ebx",
+            "    ret",
+
+            "",
+            "; ---- str_len: esi=cadena -> eax=longitud ----",
+            "str_len:",
+            "    push esi",
+            "    xor eax, eax",
+            ".sl_loop:",
+            "    cmp byte [esi], 0",
+            "    je .sl_done",
+            "    inc eax",
+            "    inc esi",
+            "    jmp .sl_loop",
+            ".sl_done:",
+            "    pop esi",
+            "    ret",
+
+            "",
+            "; ---- str_copy: esi=origen, edi=destino, edx=max ----",
+            "str_copy:",
+            "    push eax",
+            "    push ecx",
+            "    cmp edx, 1",
+            "    jbe .sc_empty",
+            "    mov ecx, edx",
+            "    dec ecx",
+            ".sc_loop:",
+            "    cmp ecx, 0",
+            "    je .sc_zero",
+            "    mov al, [esi]",
+            "    cmp al, 0",
+            "    je .sc_zero",
+            "    cmp al, 10",
+            "    je .sc_zero",
+            "    mov [edi], al",
+            "    inc esi",
+            "    inc edi",
+            "    dec ecx",
+            "    jmp .sc_loop",
+            ".sc_zero:",
+            "    mov byte [edi], 0",
+            "    jmp .sc_ret",
+            ".sc_empty:",
+            "    mov byte [edi], 0",
+            ".sc_ret:",
+            "    pop ecx",
+            "    pop eax",
+            "    ret",
+
+            "",
+            "; ---- str_trim_newline: esi=cadena ----",
+            "str_trim_newline:",
+            "    push eax",
+            ".stn_loop:",
+            "    mov al, [esi]",
+            "    cmp al, 0",
+            "    je .stn_ret",
+            "    cmp al, 10",
+            "    je .stn_zero",
+            "    inc esi",
+            "    jmp .stn_loop",
+            ".stn_zero:",
+            "    mov byte [esi], 0",
+            ".stn_ret:",
+            "    pop eax",
+            "    ret",
+
+            "",
+            "; ---- str_cmp: esi=a, edi=b -> eax=0 si iguales ----",
+            "str_cmp:",
+            "    push ebx",
+            ".scp_loop:",
+            "    mov al, [esi]",
+            "    mov bl, [edi]",
+            "    cmp al, bl",
+            "    jne .scp_diff",
+            "    cmp al, 0",
+            "    je .scp_equal",
+            "    inc esi",
+            "    inc edi",
+            "    jmp .scp_loop",
+            ".scp_equal:",
+            "    xor eax, eax",
+            "    jmp .scp_ret",
+            ".scp_diff:",
+            "    movzx eax, al",
+            "    movzx ebx, bl",
+            "    sub eax, ebx",
+            ".scp_ret:",
+            "    pop ebx",
+            "    ret",
+
+            "",
+            "; ---- str_concat: esi=a, edi=b -> eax=string_temp ----",
+            "str_concat:",
+            "    push ebx",
+            "    push ecx",
+            "    push edx",
+            "    push edi",
+            "    mov ebx, string_temp",
+            "    mov edi, ebx",
+            "    mov edx, 256",
+            "    call str_copy",
+            "    mov edi, ebx",
+            ".sct_end:",
+            "    cmp byte [edi], 0",
+            "    je .sct_append",
+            "    inc edi",
+            "    jmp .sct_end",
+            ".sct_append:",
+            "    pop esi",
+            "    mov edx, ebx",
+            "    add edx, 255",
+            "    sub edx, edi",
+            "    inc edx",
+            "    call str_copy",
+            "    mov eax, ebx",
+            "    pop edx",
+            "    pop ecx",
+            "    pop ebx",
+            "    ret",
+        ]
 
 class NodoEntrada(NodoAST):
     # Nodo que representa una lectura de variable.
-    def __init__(self, tipo, nombre, node_id="", label=""):
+    def __init__(self, tipo, nombre, node_id="", label="", prompt=None):
         self.tipo = tipo
         self.nombre = nombre
         self.node_id = node_id
         self.label = label
+        self.prompt = prompt
 
     def traducirCpp(self):
         # "Leer edad" termina como declaracion C + scanf.
-        tipo = self.tipo[1]
+        tipo = self.tipo[1] or _tipo_variable(self.nombre[1])
         nombre = self.nombre[1]
+        prompt = f"{NodoPrint([self.prompt]).traducirCpp()}\n" if self.prompt else ""
         if tipo == "string":
-            return f"char {nombre}[256];\nscanf(\"%255s\", {nombre});"
+            declaracion = f"char {nombre}[256];\n" if self.tipo[1] else ""
+            return f"{prompt}{declaracion}scanf(\"%255s\", {nombre});"
         formatos = {
             "int": "%d",
             "bool": "%d",
             "float": "%f",
             "double": "%lf",
         }
-        return f"{_tipo_c(tipo)} {nombre};\nscanf(\"{formatos.get(tipo, '%d')}\", &{nombre});"
+        declaracion = f"{_tipo_c(tipo)} {nombre};\n" if self.tipo[1] else ""
+        return f"{prompt}{declaracion}scanf(\"{formatos.get(tipo, '%d')}\", &{nombre});"
 
     def generarCodigo(self):
-        return f"    ; entrada: leer {self.nombre[1]}"
+        nombre = self.nombre[1]
+        tipo = self.tipo[1] or _tipo_variable(nombre)
+        etiqueta_fin = NodoAST.nueva_etiqueta("fin_lectura")
+        codigo = []
+
+        if self.prompt:
+            codigo.append(NodoPrint([self.prompt]).generarCodigo())
+
+        if tipo == "string":
+            codigo.extend([
+                f"    ; leer string {nombre}",
+                "    mov eax, 3",
+                "    mov ebx, 0",
+                f"    mov ecx, {nombre}",
+                f"    mov edx, {ASM_STRING_SIZE - 1}",
+                "    int 0x80",
+                "    cmp eax, 0",
+                f"    jle {etiqueta_fin}",
+                f"    mov byte [{nombre} + eax], 0",
+                f"    mov esi, {nombre}",
+                "    call str_trim_newline",
+                f"{etiqueta_fin}:",
+            ])
+            return "\n".join(codigo)
+
+        if tipo in {"float", "double"}:
+            tam = _tam_tipo_float(tipo)
+
+            codigo.extend([
+                f"    ; leer {tipo} {nombre}",
+                "    mov eax, 3",
+                "    mov ebx, 0",
+                "    mov ecx, input_buffer",
+                "    mov edx, 255",
+                "    int 0x80",
+                "    cmp eax, 0",
+                f"    jle {etiqueta_fin}",
+                "    mov byte [input_buffer + eax], 0",
+                "    mov esi, input_buffer",
+                "    call str_to_double",
+                f"    fstp {tam} [{nombre}]",
+                f"{etiqueta_fin}:",
+            ])
+            return "\n".join(codigo)
+
+        codigo.extend([
+            f"    ; leer {nombre}",
+            "    mov eax, 3",
+            "    mov ebx, 0",
+            "    mov ecx, input_buffer",
+            "    mov edx, 255",
+            "    int 0x80",
+            "    cmp eax, 0",
+            f"    jle {etiqueta_fin}",
+            "    mov byte [input_buffer + eax], 0",
+            "    mov esi, input_buffer",
+            "    call str_to_int",
+            f"    mov [{nombre}], eax",
+            f"{etiqueta_fin}:",
+        ])
+        return "\n".join(codigo)
 
     def serializar(self):
         return {
@@ -204,6 +972,7 @@ class NodoEntrada(NodoAST):
             "label": self.label,
             "data_type": self.tipo[1],
             "variable": self.nombre[1],
+            "prompt": self.prompt.serializar() if self.prompt else None,
         }
 
 
@@ -217,18 +986,48 @@ class NodoAsignacion(NodoAST):
         self.label = label
 
     def traducirCpp(self):
-        # Las asignaciones string usan arreglos char y strcpy cuando ya existen.
-        if self.tipo is not None and self.tipo[1] == "string":
-            return f"char {self.nombre[1]}[256] = {self.expresion.traducirCpp()};"
-        if self.tipo is None and NodoAST.tipos_variables.get(self.nombre[1]) == "string":
-            return f"strcpy({self.nombre[1]}, {self.expresion.traducirCpp()});"
+        tipo = self.tipo[1] if self.tipo is not None else NodoAST.tipos_variables.get(self.nombre[1])
+        nombre = self.nombre[1]
+
+        if tipo == "string":
+            expr = self.expresion.traducirCpp()
+
+            if self.tipo is not None:
+                if isinstance(self.expresion, NodoCadena):
+                    return f"char {nombre}[256] = {expr};"
+
+                return f"char {nombre}[256];\nstrcpy({nombre}, {expr});"
+
+            return f"strcpy({nombre}, {expr});"
+
         prefijo = f"{_tipo_c(self.tipo[1])} " if self.tipo is not None else ""
-        return f"{prefijo}{self.nombre[1]} = {self.expresion.traducirCpp()};"
+        return f"{prefijo}{nombre} = {self.expresion.traducirCpp()};"
 
     def generarCodigo(self):
-        codigo = [self.expresion.generarCodigo()]
-        codigo.append(f"    mov [{self.nombre[1]}], eax")
-        return "\n".join(codigo)
+        nombre = self.nombre[1]
+        tipo = self.tipo[1] if self.tipo is not None else _tipo_variable(nombre)
+
+        if tipo == "string":
+            return "\n".join([
+                self.expresion.generarCodigo(),
+                "    mov esi, eax",
+                f"    mov edi, {nombre}",
+                f"    mov edx, {ASM_STRING_SIZE}",
+                "    call str_copy",
+            ])
+
+        if tipo in {"float", "double"}:
+            tam = _tam_tipo_float(tipo)
+
+            return "\n".join([
+                _gen_float(self.expresion),
+                f"    fstp {tam} [{nombre}]",
+            ])
+
+        return "\n".join([
+            self.expresion.generarCodigo(),
+            f"    mov [{nombre}], eax",
+        ])
 
     def serializar(self):
         return {
@@ -253,7 +1052,22 @@ class NodoProceso(NodoAST):
         return expresion if expresion.endswith(";") else f"{expresion};"
 
     def generarCodigo(self):
-        return f"    ; proceso: {self.expresion}"
+        # Intenta parsear como sentencia para generar código real.
+        # Si no es posible, emite comentario para no romper el ensamblado.
+        from lexico import identificar_tokens
+        tokens = identificar_tokens(self.expresion or "")
+        try:
+            nodo = ParserSentencia(
+                tokens,
+                node_id=self.node_id,
+                label=self.label,
+                codigo_original=self.expresion,
+            ).parsear()
+            if not isinstance(nodo, NodoProceso):
+                return nodo.generarCodigo()
+        except Exception:
+            pass
+        return f"    ; proceso no traducible: {self.expresion}"
 
     def serializar(self):
         return {
@@ -263,6 +1077,25 @@ class NodoProceso(NodoAST):
             "expresion": self.expresion,
         }
 
+class NodoExpresionSentencia(NodoAST):
+    def __init__(self, expresion, node_id="", label=""):
+        self.expresion = expresion
+        self.node_id = node_id
+        self.label = label
+
+    def traducirCpp(self):
+        return f"{self.expresion.traducirCpp()};"
+
+    def generarCodigo(self):
+        return self.expresion.generarCodigo()
+
+    def serializar(self):
+        return {
+            "tipo": "NodoExpresionSentencia",
+            "node_id": self.node_id,
+            "label": self.label,
+            "expresion": self.expresion.serializar(),
+        }
 
 class NodoFin(NodoAST):
     def __init__(self, node_id="", label=""):
@@ -317,7 +1150,7 @@ class NodoIf(NodoAST):
         NodoAST.contador_etiquetas = numero
         etiqueta_sino = f"sino_{numero}"
         etiqueta_fin = f"fin_si_{numero}"
-        codigo = [self.condicion.generarCodigo(), "    cmp eax, 0", f"    je {etiqueta_sino}"]
+        codigo = [_gen_bool(self.condicion), "    cmp eax, 0", f"    je {etiqueta_sino}"]
         codigo.extend(instruccion.generarCodigo() for instruccion in self.cuerpo)
         codigo.append(f"    jmp {etiqueta_fin}")
         codigo.append(f"{etiqueta_sino}:")
@@ -352,7 +1185,7 @@ class NodoWhile(NodoAST):
         NodoAST.contador_etiquetas = numero
         etiqueta_inicio = f"mientras_{numero}"
         etiqueta_fin = f"fin_mientras_{numero}"
-        codigo = [f"{etiqueta_inicio}:", self.condicion.generarCodigo(), "    cmp eax, 0", f"    je {etiqueta_fin}"]
+        codigo = [f"{etiqueta_inicio}:", _gen_bool(self.condicion), "    cmp eax, 0", f"    je {etiqueta_fin}"]
         codigo.extend(instruccion.generarCodigo() for instruccion in self.cuerpo)
         codigo.append(f"    jmp {etiqueta_inicio}")
         codigo.append(f"{etiqueta_fin}:")
@@ -401,7 +1234,7 @@ class NodoFor(NodoAST):
         codigo = [
             self.init.generarCodigo(),
             f"{etiqueta_inicio}:",
-            self.condicion.generarCodigo(),
+            _gen_bool(self.condicion),
             "    cmp eax, 0",
             f"    je {etiqueta_fin}",
         ]
@@ -456,8 +1289,75 @@ class NodoPrint(NodoAST):
         return f'printf("{" ".join(formatos)}{salto}",{", ".join(valores)});'
 
     def generarCodigo(self):
-        args = ", ".join(a.traducirCpp() for a in self.argumentos)
-        return f"    ; salida: mostrar {args}"
+        if not self.argumentos:
+            return "\n".join([
+                "    mov eax, 4",
+                "    mov ebx, 1",
+                "    mov ecx, newline",
+                "    mov edx, 1",
+                "    int 0x80",
+            ])
+
+        lineas = []
+
+        for indice, argumento in enumerate(self.argumentos):
+            tipo = _tipo_expr(argumento)
+
+            if tipo == "string":
+                lineas.extend([
+                    argumento.generarCodigo(),
+                    "    mov esi, eax",
+                    "    call str_len",
+                    "    mov edx, eax",
+                    "    mov eax, 4",
+                    "    mov ebx, 1",
+                    "    mov ecx, esi",
+                    "    int 0x80",
+                ])
+
+            elif tipo in {"float", "double"}:
+                lineas.extend([
+                    _gen_float(argumento),
+                    "    mov esi, print_buffer",
+                    "    call double_to_str",
+                    "    mov edx, eax",
+                    "    mov eax, 4",
+                    "    mov ebx, 1",
+                    "    mov ecx, print_buffer",
+                    "    int 0x80",
+                ])
+
+            else:
+                lineas.extend([
+                    argumento.generarCodigo(),
+                    "    mov esi, print_buffer",
+                    "    call int_to_str",
+                    "    mov edx, eax",
+                    "    mov eax, 4",
+                    "    mov ebx, 1",
+                    "    mov ecx, print_buffer",
+                    "    int 0x80",
+                ])
+
+            if indice < len(self.argumentos) - 1:
+                lineas.extend([
+                    "    mov eax, 4",
+                    "    mov ebx, 1",
+                    "    mov ecx, space_chr",
+                    "    mov edx, 1",
+                    "    int 0x80",
+                ])
+
+        if self.salto_linea:
+            lineas.extend([
+                "    mov eax, 4",
+                "    mov ebx, 1",
+                "    mov ecx, newline",
+                "    mov edx, 1",
+                "    int 0x80",
+            ])
+
+        return "\n".join(lineas)
 
     def serializar(self):
         return {
@@ -482,6 +1382,103 @@ class NodoOperacion(NodoAST):
         return f"{izquierda} {self.operador[1]} {derecha}"
 
     def generarCodigo(self):
+        tipo_i = _tipo_expr(self.izquierda)
+        tipo_d = _tipo_expr(self.derecha)
+        op = self.operador[1]
+
+        if op in {"&&", "||"}:
+            if op == "&&":
+                return "\n".join([
+                    _gen_bool(self.izquierda),
+                    "    push eax",
+                    _gen_bool(self.derecha),
+                    "    mov ebx, eax",
+                    "    pop eax",
+                    "    cmp eax, 0",
+                    "    setne al",
+                    "    cmp ebx, 0",
+                    "    setne bl",
+                    "    and al, bl",
+                    "    movzx eax, al",
+                ])
+
+            return "\n".join([
+                _gen_bool(self.izquierda),
+                "    push eax",
+                _gen_bool(self.derecha),
+                "    mov ebx, eax",
+                "    pop eax",
+                "    or eax, ebx",
+                "    setne al",
+                "    movzx eax, al",
+            ])
+
+        if tipo_i == "string" or tipo_d == "string":
+            if op == "+":
+                if tipo_i != "string" or tipo_d != "string":
+                    raise Exception(
+                        "El operador + con string en ASM requiere que ambos operandos sean string."
+                    )
+
+                return "\n".join([
+                    self.izquierda.generarCodigo(),
+                    "    push eax",
+                    self.derecha.generarCodigo(),
+                    "    mov edi, eax",
+                    "    pop esi",
+                    "    call str_concat",
+                ])
+
+            if op in {"==", "!="}:
+                if tipo_i != "string" or tipo_d != "string":
+                    raise Exception(
+                        "La comparación string en ASM requiere que ambos operandos sean string."
+                    )
+
+                salto = "sete" if op == "==" else "setne"
+
+                return "\n".join([
+                    self.izquierda.generarCodigo(),
+                    "    push eax",
+                    self.derecha.generarCodigo(),
+                    "    mov edi, eax",
+                    "    pop esi",
+                    "    call str_cmp",
+                    "    cmp eax, 0",
+                    f"    {salto} al",
+                    "    movzx eax, al",
+                ])
+
+            raise Exception(f"Operador no soportado para string en ASM: {op}")
+
+        if _es_tipo_float(tipo_i) or _es_tipo_float(tipo_d):
+            if op in {"+", "-", "*", "/"}:
+                return "\n".join([
+                    self.generarCodigoFloat(),
+                    "    fistp dword [tmp_int]",
+                    "    mov eax, [tmp_int]",
+                ])
+
+            if op in {">", "<", ">=", "<=", "==", "!="}:
+                rel = {
+                    ">": "seta",
+                    "<": "setb",
+                    ">=": "setae",
+                    "<=": "setbe",
+                    "==": "sete",
+                    "!=": "setne",
+                }[op]
+
+                return "\n".join([
+                    _gen_float(self.izquierda),
+                    _gen_float(self.derecha),
+                    "    fxch st1",
+                    "    fcomip st0, st1",
+                    "    fstp st0",
+                    f"    {rel} al",
+                    "    movzx eax, al",
+                ])
+
         codigo = [
             self.izquierda.generarCodigo(),
             "    push eax",
@@ -489,11 +1486,13 @@ class NodoOperacion(NodoAST):
             "    mov ebx, eax",
             "    pop eax",
         ]
+
         aritmeticos = {
             "+": "    add eax, ebx",
             "-": "    sub eax, ebx",
             "*": "    imul eax, ebx",
         }
+
         relacionales = {
             ">": "setg",
             "<": "setl",
@@ -502,16 +1501,60 @@ class NodoOperacion(NodoAST):
             "==": "sete",
             "!=": "setne",
         }
-        if self.operador[1] in aritmeticos:
-            codigo.append(aritmeticos[self.operador[1]])
-        elif self.operador[1] == "/":
-            codigo.extend(["    cdq", "    idiv ebx"])
-        elif self.operador[1] in relacionales:
-            codigo.extend(["    cmp eax, ebx", f"    {relacionales[self.operador[1]]} al", "    movzx eax, al"])
-        elif self.operador[1] in {"&&", "||"}:
-            codigo.append(f"    ; operador logico {self.operador[1]}")
+
+        if op in aritmeticos:
+            codigo.append(aritmeticos[op])
+
+        elif op == "/":
+            codigo.extend([
+                "    cdq",
+                "    idiv ebx",
+            ])
+
+        elif op == "%":
+            codigo.extend([
+                "    cdq",
+                "    idiv ebx",
+                "    mov eax, edx",
+            ])
+
+        elif op in relacionales:
+            codigo.extend([
+                "    cmp eax, ebx",
+                f"    {relacionales[op]} al",
+                "    movzx eax, al",
+            ])
+
         else:
-            codigo.append(f"    ; operador no implementado: {self.operador[1]}")
+            codigo.append(f"    ; operador no implementado: {op}")
+
+        return "\n".join(codigo)
+
+
+    def generarCodigoFloat(self):
+        op = self.operador[1]
+
+        if op not in {"+", "-", "*", "/"}:
+            return "\n".join([
+                self.generarCodigo(),
+                "    mov [tmp_int], eax",
+                "    fild dword [tmp_int]",
+            ])
+
+        codigo = [
+            _gen_float(self.izquierda),
+            _gen_float(self.derecha),
+        ]
+
+        if op == "+":
+            codigo.append("    faddp st1, st0")
+        elif op == "-":
+            codigo.append("    fsubp st1, st0")
+        elif op == "*":
+            codigo.append("    fmulp st1, st0")
+        elif op == "/":
+            codigo.append("    fdivp st1, st0")
+
         return "\n".join(codigo)
 
     def serializar(self):
@@ -547,11 +1590,45 @@ class NodoUnario(NodoAST):
         return f"{self.operador[1]}{expresion}"
 
     def generarCodigo(self):
+        tipo = _tipo_expr(self.expresion)
+
+        if self.operador[1] == "!":
+            return "\n".join([
+                _gen_bool(self.expresion),
+                "    cmp eax, 0",
+                "    sete al",
+                "    movzx eax, al",
+            ])
+
+        if self.operador[1] == "-" and _es_tipo_float(tipo):
+            return "\n".join([
+                _gen_float(self.expresion),
+                "    fchs",
+                "    fistp dword [tmp_int]",
+                "    mov eax, [tmp_int]",
+            ])
+
         codigo = [self.expresion.generarCodigo()]
+
         if self.operador[1] == "-":
             codigo.append("    neg eax")
-        elif self.operador[1] == "!":
-            codigo.extend(["    cmp eax, 0", "    sete al", "    movzx eax, al"])
+
+        return "\n".join(codigo)
+
+
+    def generarCodigoFloat(self):
+        if self.operador[1] == "!":
+            return "\n".join([
+                self.generarCodigo(),
+                "    mov [tmp_int], eax",
+                "    fild dword [tmp_int]",
+            ])
+
+        codigo = [_gen_float(self.expresion)]
+
+        if self.operador[1] == "-":
+            codigo.append("    fchs")
+
         return "\n".join(codigo)
 
     def serializar(self):
@@ -563,7 +1640,6 @@ class NodoUnario(NodoAST):
 
 
 class NodoLlamadaFuncion(NodoAST):
-    # Nodo que representa una llamada simple tipo f(a, 1).
     def __init__(self, nombre_funcion, argumentos):
         self.nombre_funcion = nombre_funcion
         self.argumentos = argumentos
@@ -572,8 +1648,164 @@ class NodoLlamadaFuncion(NodoAST):
         args = ", ".join(a.traducirCpp() for a in self.argumentos)
         return f"{self.nombre_funcion}({args})"
 
+    def _generar_push_argumentos(self):
+        lineas = []
+        bytes_args = 0
+
+        for argumento in reversed(self.argumentos):
+            tipo = _tipo_expr(argumento)
+
+            if tipo in {"float", "double"}:
+                lineas.extend([
+                    _gen_float(argumento),
+                    "    sub esp, 8",
+                    "    fstp qword [esp]",
+                ])
+                bytes_args += 8
+
+            elif tipo == "string":
+                lineas.extend([
+                    argumento.generarCodigo(),
+                    "    push eax",
+                ])
+                bytes_args += 4
+
+            else:
+                lineas.extend([
+                    argumento.generarCodigo(),
+                    "    push eax",
+                ])
+                bytes_args += 4
+
+        return lineas, bytes_args
+
     def generarCodigo(self):
-        return f"    ; llamada a funcion {self.traducirCpp()}"
+        nombre = self.nombre_funcion
+
+        if nombre in {"len", "strlen", "length"}:
+            if not self.argumentos:
+                return "    mov eax, 0"
+
+            return "\n".join([
+                self.argumentos[0].generarCodigo(),
+                "    mov esi, eax",
+                "    call str_len",
+            ])
+
+        if nombre == "concat" and len(self.argumentos) >= 2:
+            return "\n".join([
+                self.argumentos[0].generarCodigo(),
+                "    push eax",
+                self.argumentos[1].generarCodigo(),
+                "    mov edi, eax",
+                "    pop esi",
+                "    call str_concat",
+            ])
+
+        if nombre == "abs" and self.argumentos and not _es_tipo_float(_tipo_expr(self.argumentos[0])):
+            etiqueta = NodoAST.nueva_etiqueta("abs_fin")
+
+            return "\n".join([
+                self.argumentos[0].generarCodigo(),
+                "    cmp eax, 0",
+                f"    jge {etiqueta}",
+                "    neg eax",
+                f"{etiqueta}:",
+            ])
+
+        if nombre == "int" and self.argumentos:
+            if _es_tipo_float(_tipo_expr(self.argumentos[0])):
+                return "\n".join([
+                    _gen_float(self.argumentos[0]),
+                    "    fistp dword [tmp_int]",
+                    "    mov eax, [tmp_int]",
+                ])
+
+            return self.argumentos[0].generarCodigo()
+
+        if nombre in {"float", "double"} and self.argumentos:
+            return "\n".join([
+                _gen_float(self.argumentos[0]),
+                "    fistp dword [tmp_int]",
+                "    mov eax, [tmp_int]",
+            ])
+
+        if nombre in {"max", "min"} and len(self.argumentos) >= 2:
+            if _es_tipo_float(_tipo_expr(self.argumentos[0])) or _es_tipo_float(_tipo_expr(self.argumentos[1])):
+                return "\n".join([
+                    self.generarCodigoFloat(),
+                    "    fistp dword [tmp_int]",
+                    "    mov eax, [tmp_int]",
+                ])
+
+            etiqueta = NodoAST.nueva_etiqueta(f"{nombre}_fin")
+            salto = "jge" if nombre == "max" else "jle"
+
+            return "\n".join([
+                self.argumentos[0].generarCodigo(),
+                "    push eax",
+                self.argumentos[1].generarCodigo(),
+                "    mov ebx, eax",
+                "    pop eax",
+                "    cmp eax, ebx",
+                f"    {salto} {etiqueta}",
+                "    mov eax, ebx",
+                f"{etiqueta}:",
+            ])
+
+        lineas, bytes_args = self._generar_push_argumentos()
+        lineas.append(f"    call {nombre}")
+
+        if bytes_args:
+            lineas.append(f"    add esp, {bytes_args}")
+
+        return "\n".join(lineas)
+
+    def generarCodigoFloat(self):
+        nombre = self.nombre_funcion
+
+        if nombre in {"float", "double"} and self.argumentos:
+            return _gen_float(self.argumentos[0])
+
+        if nombre in {"sqrt", "sin", "cos", "abs"} and self.argumentos:
+            codigo = [_gen_float(self.argumentos[0])]
+
+            if nombre == "sqrt":
+                codigo.append("    fsqrt")
+            elif nombre == "sin":
+                codigo.append("    fsin")
+            elif nombre == "cos":
+                codigo.append("    fcos")
+            elif nombre == "abs":
+                codigo.append("    fabs")
+
+            return "\n".join(codigo)
+
+        if nombre in {"max", "min"} and len(self.argumentos) >= 2:
+            et_true = NodoAST.nueva_etiqueta(f"{nombre}_f_true")
+            et_fin = NodoAST.nueva_etiqueta(f"{nombre}_f_fin")
+            salto = "jae" if nombre == "max" else "jbe"
+
+            return "\n".join([
+                _gen_float(self.argumentos[0]),
+                _gen_float(self.argumentos[1]),
+                "    fxch st1",
+                "    fcomip st0, st1",
+                f"    {salto} {et_true}",
+                f"    jmp {et_fin}",
+                f"{et_true}:",
+                "    fstp st0",
+                _gen_float(self.argumentos[0]),
+                f"{et_fin}:",
+            ])
+
+        lineas, bytes_args = self._generar_push_argumentos()
+        lineas.append(f"    call {nombre}")
+
+        if bytes_args:
+            lineas.append(f"    add esp, {bytes_args}")
+
+        return "\n".join(lineas)
 
     def serializar(self):
         return {
@@ -581,7 +1813,6 @@ class NodoLlamadaFuncion(NodoAST):
             "nombre_funcion": self.nombre_funcion,
             "argumentos": [a.serializar() for a in self.argumentos],
         }
-
 
 class NodoIdentificador(NodoAST):
     # Nodo que representa a un identificador.
@@ -592,7 +1823,37 @@ class NodoIdentificador(NodoAST):
         return self.nombre[1]
 
     def generarCodigo(self):
-        return f"    mov eax, [{self.nombre[1]}]"
+        nombre = self.nombre[1]
+        tipo = _tipo_variable(nombre)
+
+        if tipo == "string":
+            return f"    mov eax, {nombre}"
+
+        if tipo in {"float", "double"}:
+            tam = _tam_tipo_float(tipo)
+
+            return "\n".join([
+                f"    fld {tam} [{nombre}]",
+                "    fistp dword [tmp_int]",
+                "    mov eax, [tmp_int]",
+            ])
+
+        return f"    mov eax, [{nombre}]"
+
+
+    def generarCodigoFloat(self):
+        nombre = self.nombre[1]
+        tipo = _tipo_variable(nombre)
+
+        if tipo in {"float", "double"}:
+            tam = _tam_tipo_float(tipo)
+            return f"    fld {tam} [{nombre}]"
+
+        return "\n".join([
+            f"    mov eax, [{nombre}]",
+            "    mov [tmp_int], eax",
+            "    fild dword [tmp_int]",
+        ])
 
     def serializar(self):
         return {"tipo": "NodoIdentificador", "nombre": self.nombre[1]}
@@ -607,7 +1868,34 @@ class NodoNumero(NodoAST):
         return self.valor[1]
 
     def generarCodigo(self):
+        if _es_float_literal(self.valor[1]):
+            etiqueta = getattr(self, "etiqueta_float", None)
+
+            if etiqueta is None:
+                return f"    ; ERROR: literal float sin etiqueta: {self.valor[1]}"
+
+            return "\n".join([
+                f"    fld qword [{etiqueta}]",
+                "    fistp dword [tmp_int]",
+                "    mov eax, [tmp_int]",
+            ])
+
         return f"    mov eax, {self.valor[1]}"
+
+
+    def generarCodigoFloat(self):
+        if _es_float_literal(self.valor[1]):
+            etiqueta = getattr(self, "etiqueta_float", None)
+
+            if etiqueta is None:
+                return f"    ; ERROR: literal float sin etiqueta: {self.valor[1]}"
+
+            return f"    fld qword [{etiqueta}]"
+
+        return "\n".join([
+            f"    mov dword [tmp_int], {self.valor[1]}",
+            "    fild dword [tmp_int]",
+        ])
 
     def serializar(self):
         return {"tipo": "NodoNumero", "valor": self.valor[1]}
@@ -622,7 +1910,12 @@ class NodoCadena(NodoAST):
         return self.valor[1]
 
     def generarCodigo(self):
-        return f"    ; cadena {self.valor[1]}"
+        etiqueta = getattr(self, "etiqueta", None)
+
+        if etiqueta is None:
+            return "    ; ERROR: cadena sin etiqueta asignada\n    mov eax, 0"
+
+        return f"    mov eax, {etiqueta}"
 
     def serializar(self):
         return {"tipo": "NodoCadena", "valor": self.valor[1]}
@@ -804,7 +2097,32 @@ class ParserSentencia:
         elif self._es_decremento():
             nodo = self.incremento(-1)
         else:
-            return NodoProceso(self.codigo_original, node_id=self.node_id, label=self.label)
+            fin = self.pos
+            while fin < len(self.tokens) and self.tokens[fin][1] != ";":
+                fin += 1
+
+            try:
+                expresion = ParserExpresion(self.tokens[self.pos:fin]).parsear()
+                self.pos = fin
+
+                if isinstance(expresion, NodoLlamadaFuncion):
+                    nodo = NodoExpresionSentencia(
+                        expresion,
+                        node_id=self.node_id,
+                        label=self.label
+                    )
+                else:
+                    return NodoProceso(
+                        self.codigo_original,
+                        node_id=self.node_id,
+                        label=self.label
+                    )
+            except Exception:
+                return NodoProceso(
+                    self.codigo_original,
+                    node_id=self.node_id,
+                    label=self.label
+                )
 
         if self.obtener_token_actual() and self.obtener_token_actual()[1] == ";":
             self.coincidir("DELIMITER", ";")
@@ -996,14 +2314,41 @@ class ParserAST:
 
         if node_type == "input":
             variable = data.get("variable", data.get("name"))
-            data_type = data.get("dataType", data.get("type", "int"))
+            data_type = data.get("dataType")
+            prompt = self._texto(data, "prompt", "message")
+
+            if not data_type:
+                data_type = data.get("data_type")
+
+            tipo_texto, variable_texto, tipo_explicito, prompt_texto = self._parsear_texto_entrada(texto_figura)
+
+            if not prompt:
+                prompt = prompt_texto
+
             if not variable:
-                variable = self._parsear_texto_entrada(texto_figura)
+                variable = variable_texto
+
+            tipos_validos = {"int", "float", "double", "bool", "string"}
+
+            if data_type:
+                data_type = str(data_type).strip().lower()
+
+            # Si el texto dice explícitamente "string nombre", gana el texto.
+            if tipo_explicito:
+                data_type = tipo_texto
+
+            # Si no hay tipo, se interpreta como lectura de una variable ya creada.
+            elif not data_type:
+                data_type = ""
+            elif data_type not in tipos_validos:
+                data_type = tipo_texto
+
             return NodoEntrada(
                 ("KEYWORD", data_type),
                 ("IDENTIFIER", variable),
                 node_id=node_id,
                 label=label,
+                prompt=self._parsear_prompt_entrada(prompt) if prompt else None,
             )
         if node_type == "output":
             expresion = self._texto(data, "expression", "value", "code")
@@ -1089,11 +2434,63 @@ class ParserAST:
         return self._texto(data, "text", "label", "value", "code", "expression")
 
     def _parsear_texto_entrada(self, texto):
-        # Convierte "Leer edad" en variable "edad".
-        partes = (texto or "").strip().split()
-        if len(partes) >= 2 and partes[0].lower() in {"leer", "input", "ingresar"}:
-            return partes[1]
-        return texto.strip()
+        # Devuelve (tipo, variable, tipo_explicito, prompt).
+        # tipo_explicito=True cuando el usuario escribió:
+        #   "Leer string nombre"
+        #   "string nombre"
+        #   "input float nota"
+        #
+        # Si solo dice "nombre", no inferimos tipo: la entrada debe traer tipo.
+
+        tipos = {"int", "float", "double", "bool", "string"}
+        prefijos = {"leer", "input", "ingresar", "ingresa"}
+        nombres_string = {
+            "nombre",
+            "apellido",
+            "texto",
+            "cadena",
+            "mensaje",
+            "usuario",
+            "correo",
+            "email",
+        }
+
+        prompt, entrada = self._separar_prompt_entrada(texto or "")
+        partes = entrada.strip().split()
+
+        if not partes:
+            return "", "", False, prompt
+
+        if partes[0].lower() in prefijos:
+            partes = partes[1:]
+
+        # Para casos como: "Ingresa tu nombre"
+        if partes and partes[0].lower() == "tu":
+            partes = partes[1:]
+
+        if not partes:
+            return "", "", False, prompt
+
+        if partes[0].lower() in tipos:
+            tipo = partes[0].lower()
+            variable = partes[1] if len(partes) >= 2 else ""
+            return tipo, variable, True, prompt
+
+        return "", partes[-1], False, prompt
+
+    def _separar_prompt_entrada(self, texto):
+        partes = self._separar_por_comas(texto)
+        if len(partes) >= 2 and partes[0].strip().startswith('"'):
+            return partes[0].strip(), ",".join(partes[1:]).strip()
+        return "", texto
+
+    def _parsear_prompt_entrada(self, prompt):
+        prompt = str(prompt).strip()
+        if not prompt:
+            return None
+        if prompt.startswith('"') and prompt.endswith('"'):
+            return NodoCadena(("STRING", prompt))
+        return self._parsear_expresion(prompt)
 
     def _parsear_texto_salida(self, texto):
         # Convierte "Mostrar x" en expresion x; si no tiene prefijo, se imprime como texto.

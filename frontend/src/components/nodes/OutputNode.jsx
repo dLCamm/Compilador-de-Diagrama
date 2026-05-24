@@ -12,7 +12,10 @@ export default function OutputNode({ id, data }) {
                     "variable",
                     '"texto"',
                     '"texto", variable',
+                    "variableTexto, variable",
                     '"texto", variable, expresion',
+                    "variableTexto, variable, expresion",
+                    '...',
                 ]}
             />
 

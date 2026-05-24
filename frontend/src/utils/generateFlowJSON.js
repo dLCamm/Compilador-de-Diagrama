@@ -1,3 +1,63 @@
+const TIPOS_VALIDOS = new Set(["int", "float", "double", "bool", "string"]);
+
+function parsearEntrada(valor = "") {
+  const texto = String(valor).trim();
+  const partesEntrada = separarMensajeEntrada(texto);
+  const mensaje = partesEntrada.mensaje;
+  const entrada = partesEntrada.entrada;
+  const partes = entrada.split(/\s+/);
+
+  if (partes.length >= 2 && TIPOS_VALIDOS.has(partes[0])) {
+    return {
+      prompt: mensaje,
+      dataType: partes[0],
+      variable: partes[1]
+    };
+  }
+
+  return {
+    prompt: mensaje,
+    dataType: "",
+    variable: entrada
+  };
+}
+
+function separarMensajeEntrada(texto) {
+  let enCadena = false;
+  let escape = false;
+
+  for (let i = 0; i < texto.length; i += 1) {
+    const caracter = texto[i];
+
+    if (escape) {
+      escape = false;
+      continue;
+    }
+
+    if (caracter === "\\") {
+      escape = true;
+      continue;
+    }
+
+    if (caracter === '"') {
+      enCadena = !enCadena;
+      continue;
+    }
+
+    if (caracter === "," && !enCadena) {
+      return {
+        mensaje: texto.slice(0, i).trim(),
+        entrada: texto.slice(i + 1).trim()
+      };
+    }
+  }
+
+  return {
+    mensaje: "",
+    entrada: texto
+  };
+}
+
 export function generateFlowJSON(nodes, edges) {
 
   const cleanNodes = nodes.map((node) => {
@@ -29,11 +89,13 @@ export function generateFlowJSON(nodes, edges) {
 
 
     if (node.type === "input") {
+      const entrada = parsearEntrada(node.data.variable);
 
       cleanNode.data = {
-        label: `Leer ${node.data.variable}`,
-        variable: node.data.variable,
-        dataType: "int"
+        label: `Leer ${[entrada.prompt, entrada.dataType, entrada.variable].filter(Boolean).join(" ")}`,
+        variable: entrada.variable,
+        dataType: entrada.dataType,
+        prompt: entrada.prompt
       };
     }
 

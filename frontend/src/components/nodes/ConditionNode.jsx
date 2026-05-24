@@ -66,9 +66,9 @@ export default function ConditionNode({id, data }) {
           id="false"
         />
 
-        <textarea
+        <input
           className="node-field"
-        rows={1}
+          spellCheck="false"
 
           value={data.expression}
           placeholder="Condición"
@@ -86,8 +86,6 @@ export default function ConditionNode({id, data }) {
           style={{
             border: "none",
             outline: "none",
-            resize: "none",
-            overflow: "hidden",
             width: "100%",
             height: "24px",
             transform: "rotate(-45deg)",
@@ -98,7 +96,6 @@ export default function ConditionNode({id, data }) {
             fontFamily: "Source Code Pro, monospace",
             lineheight: "15px",
             fontSize: "18px",
-            spellcheck: "false",
           }}
         />
       </div>

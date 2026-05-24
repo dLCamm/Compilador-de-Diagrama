@@ -9,8 +9,14 @@ export default function InputNode({ id, data }) {
             <NodeHint
                 titulo="Entrada"
                 lineas={[
+                    "tipo variable",
                     "variable",
+                    '"texto", tipo variable',
+                    '"texto", variable',
+                    "variableTexto, tipo variable",
+                    "variableTexto, variable",
                     "Tipos: int, float, double, bool, string",
+                    "Si ya existe la variable, puedes usar solo variable",
                 ]}
             />
 
