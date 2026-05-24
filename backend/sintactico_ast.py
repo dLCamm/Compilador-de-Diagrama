@@ -10,6 +10,11 @@ def indentar_codigo(codigo, espacios=4):
     return "\n".join(indentacion + linea if linea else linea for linea in codigo.splitlines())
 
 
+def _bloque_c(encabezado, instrucciones):
+    cuerpo = "\n".join(indentar_codigo(i.traducirCpp()) for i in instrucciones) or "    ;"
+    return f"{encabezado}\n{{\n{cuerpo}\n}}"
+
+
 def _precedencia_operador(operador):
     # Mantiene la precedencia al reconstruir expresiones como (a + b) * 2.
     precedencias = {
@@ -54,6 +59,12 @@ def _formato_printf(nodo):
 class NodoAST:
     # Clase base para todos los nodos del AST.
     tipos_variables = {}
+    contador_etiquetas = 0
+
+    @classmethod
+    def nueva_etiqueta(cls, nombre):
+        cls.contador_etiquetas += 1
+        return f"{nombre}_{cls.contador_etiquetas}"
 
     def traducirCpp(self):
         raise NotImplementedError("Metodo traducirCpp() no implementado en este Nodo.")
@@ -92,7 +103,8 @@ class NodoPrograma(NodoAST):
         return "\n".join([
             *includes,
             "",
-            "int main() {",
+            "int main()",
+            "{",
             cuerpo,
             "    return 0;",
             "}",
@@ -100,6 +112,7 @@ class NodoPrograma(NodoAST):
 
     def generarCodigo(self):
         # Estructura base del assembler siguiendo el ejemplo de referencia.
+        NodoAST.contador_etiquetas = 0
         self.variables = self._recolectar_variables(self.instrucciones)
         data = ["section .data", "    newline: db 10", "    dot: db '.'"]
         bss = ["section .bss", "    print_buffer: resb 32"]
@@ -110,7 +123,8 @@ class NodoPrograma(NodoAST):
         codigo = ["section .text", "global _start", "_start:"]
         codigo.extend(i.generarCodigo() for i in self.instrucciones if not isinstance(i, NodoFin))
         codigo.extend([
-            "    mov eax, 1  ; syscall exit",
+            "    ; terminar programa",
+            "    mov eax, 1",
             "    mov ebx, 0",
             "    int 0x80",
         ])
@@ -181,7 +195,7 @@ class NodoEntrada(NodoAST):
         return f"{_tipo_c(tipo)} {nombre};\nscanf(\"{formatos.get(tipo, '%d')}\", &{nombre});"
 
     def generarCodigo(self):
-        return f"    ; leer {self.nombre[1]} ({self.tipo[1]})"
+        return f"    ; entrada: leer {self.nombre[1]}"
 
     def serializar(self):
         return {
@@ -276,17 +290,39 @@ class NodoIf(NodoAST):
 
     def traducirCpp(self):
         cuerpo = "\n".join(indentar_codigo(c.traducirCpp()) for c in self.cuerpo) or "    ;"
+        if len(self.sino) == 1 and isinstance(self.sino[0], NodoIf):
+            else_if = self.sino[0].traducirCpp()
+            return (
+                f"if({self.condicion.traducirCpp()})\n"
+                "{\n"
+                f"{cuerpo}\n"
+                "}\n"
+                f"else {else_if}"
+            )
+
         sino = "\n".join(indentar_codigo(c.traducirCpp()) for c in self.sino) or "    ;"
-        return f"if ({self.condicion.traducirCpp()}) {{\n{cuerpo}\n}} else {{\n{sino}\n}}"
+        return (
+            f"if({self.condicion.traducirCpp()})\n"
+            "{\n"
+            f"{cuerpo}\n"
+            "}\n"
+            "else\n"
+            "{\n"
+            f"{sino}\n"
+            "}"
+        )
 
     def generarCodigo(self):
-        sufijo = str(id(self))
-        codigo = [self.condicion.generarCodigo(), "    cmp eax, 0", f"    jz else_{sufijo}"]
+        numero = NodoAST.contador_etiquetas + 1
+        NodoAST.contador_etiquetas = numero
+        etiqueta_sino = f"sino_{numero}"
+        etiqueta_fin = f"fin_si_{numero}"
+        codigo = [self.condicion.generarCodigo(), "    cmp eax, 0", f"    je {etiqueta_sino}"]
         codigo.extend(instruccion.generarCodigo() for instruccion in self.cuerpo)
-        codigo.append(f"    jmp endif_{sufijo}")
-        codigo.append(f"else_{sufijo}:")
+        codigo.append(f"    jmp {etiqueta_fin}")
+        codigo.append(f"{etiqueta_sino}:")
         codigo.extend(instruccion.generarCodigo() for instruccion in self.sino)
-        codigo.append(f"endif_{sufijo}:")
+        codigo.append(f"{etiqueta_fin}:")
         return "\n".join(codigo)
 
     def serializar(self):
@@ -309,15 +345,17 @@ class NodoWhile(NodoAST):
         self.label = label
 
     def traducirCpp(self):
-        cuerpo = "\n".join(indentar_codigo(c.traducirCpp()) for c in self.cuerpo) or "    ;"
-        return f"while ({self.condicion.traducirCpp()}) {{\n{cuerpo}\n}}"
+        return _bloque_c(f"while({self.condicion.traducirCpp()})", self.cuerpo)
 
     def generarCodigo(self):
-        sufijo = str(id(self))
-        codigo = [f"while_inicio_{sufijo}:", self.condicion.generarCodigo(), "    cmp eax, 0", f"    jz while_fin_{sufijo}"]
+        numero = NodoAST.contador_etiquetas + 1
+        NodoAST.contador_etiquetas = numero
+        etiqueta_inicio = f"mientras_{numero}"
+        etiqueta_fin = f"fin_mientras_{numero}"
+        codigo = [f"{etiqueta_inicio}:", self.condicion.generarCodigo(), "    cmp eax, 0", f"    je {etiqueta_fin}"]
         codigo.extend(instruccion.generarCodigo() for instruccion in self.cuerpo)
-        codigo.append(f"    jmp while_inicio_{sufijo}")
-        codigo.append(f"while_fin_{sufijo}:")
+        codigo.append(f"    jmp {etiqueta_inicio}")
+        codigo.append(f"{etiqueta_fin}:")
         return "\n".join(codigo)
 
     def serializar(self):
@@ -342,24 +380,35 @@ class NodoFor(NodoAST):
 
     def traducirCpp(self):
         # El for se infiere de: init -> condition -> cuerpo -> incremento -> condition.
-        init = self.init.traducirCpp().rstrip(";")
+        if isinstance(self.init, NodoAsignacion) and self.init.tipo is not None:
+            tipo = _tipo_c(self.init.tipo[1])
+            nombre = self.init.nombre[1]
+            valor = self.init.expresion.traducirCpp()
+            declaracion = f"{tipo} {nombre};"
+            init = f"{nombre} = {valor}"
+        else:
+            declaracion = ""
+            init = self.init.traducirCpp().rstrip(";")
         incremento = self.incremento.traducirCpp().rstrip(";")
-        cuerpo = "\n".join(indentar_codigo(c.traducirCpp()) for c in self.cuerpo) or "    ;"
-        return f"for ({init}; {self.condicion.traducirCpp()}; {incremento}) {{\n{cuerpo}\n}}"
+        ciclo = _bloque_c(f"for({init}; {self.condicion.traducirCpp()}; {incremento})", self.cuerpo)
+        return f"{declaracion}\n{ciclo}" if declaracion else ciclo
 
     def generarCodigo(self):
-        sufijo = str(id(self))
+        numero = NodoAST.contador_etiquetas + 1
+        NodoAST.contador_etiquetas = numero
+        etiqueta_inicio = f"para_{numero}"
+        etiqueta_fin = f"fin_para_{numero}"
         codigo = [
             self.init.generarCodigo(),
-            f"for_inicio_{sufijo}:",
+            f"{etiqueta_inicio}:",
             self.condicion.generarCodigo(),
             "    cmp eax, 0",
-            f"    jz for_fin_{sufijo}",
+            f"    je {etiqueta_fin}",
         ]
         codigo.extend(instruccion.generarCodigo() for instruccion in self.cuerpo)
         codigo.append(self.incremento.generarCodigo())
-        codigo.append(f"    jmp for_inicio_{sufijo}")
-        codigo.append(f"for_fin_{sufijo}:")
+        codigo.append(f"    jmp {etiqueta_inicio}")
+        codigo.append(f"{etiqueta_fin}:")
         return "\n".join(codigo)
 
     def serializar(self):
@@ -404,11 +453,11 @@ class NodoPrint(NodoAST):
             valores.append(argumento.traducirCpp())
 
         salto = "\\n" if self.salto_linea else ""
-        return f'printf("{" ".join(formatos)}{salto}", {", ".join(valores)});'
+        return f'printf("{" ".join(formatos)}{salto}",{", ".join(valores)});'
 
     def generarCodigo(self):
         args = ", ".join(a.traducirCpp() for a in self.argumentos)
-        return f"    ; mostrar: {args}"
+        return f"    ; salida: mostrar {args}"
 
     def serializar(self):
         return {
@@ -960,7 +1009,7 @@ class ParserAST:
             expresion = self._texto(data, "expression", "value", "code")
             if not expresion:
                 expresion = self._parsear_texto_salida(texto_figura)
-            return NodoPrint([self._parsear_expresion_o_cadena(expresion)], node_id=node_id, label=label)
+            return NodoPrint(self._parsear_argumentos_salida(expresion), node_id=node_id, label=label)
         if node_type == "process":
             codigo = self._texto(data, "expression", "code") or texto_figura
             return self._parsear_sentencia(codigo, node_id, label)
@@ -980,6 +1029,42 @@ class ParserAST:
         except Exception:
             texto = str(expresion).strip().replace("\\", "\\\\").replace('"', '\\"')
             return NodoCadena(("STRING", f'"{texto}"'))
+
+    def _parsear_argumentos_salida(self, expresion):
+        partes = self._separar_por_comas(expresion)
+        return [self._parsear_expresion_o_cadena(parte) for parte in partes] or [NodoCadena(("STRING", '""'))]
+
+    def _separar_por_comas(self, texto):
+        partes = []
+        actual = []
+        en_cadena = False
+        escape = False
+
+        for caracter in str(texto or ""):
+            if escape:
+                actual.append(caracter)
+                escape = False
+                continue
+            if caracter == "\\":
+                actual.append(caracter)
+                escape = True
+                continue
+            if caracter == '"':
+                actual.append(caracter)
+                en_cadena = not en_cadena
+                continue
+            if caracter == "," and not en_cadena:
+                parte = "".join(actual).strip()
+                if parte:
+                    partes.append(parte)
+                actual = []
+                continue
+            actual.append(caracter)
+
+        parte = "".join(actual).strip()
+        if parte:
+            partes.append(parte)
+        return partes
 
     def _parsear_sentencia(self, codigo, node_id, label):
         tokens = identificar_tokens(codigo or "")

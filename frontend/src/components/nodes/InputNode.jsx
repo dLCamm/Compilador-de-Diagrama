@@ -1,8 +1,18 @@
 import { Handle, Position } from "reactflow";
+import NodeHint from "./NodeHint";
 
 export default function InputNode({ id, data }) {
 
     return (
+
+        <div className="node-hint-wrap node-hint-wrap-io">
+            <NodeHint
+                titulo="Entrada"
+                lineas={[
+                    "variable",
+                    "Tipos: int, float, double, bool, string",
+                ]}
+            />
 
         <div
             style={{
@@ -24,6 +34,7 @@ export default function InputNode({ id, data }) {
             />
 
             <input
+                className="node-field"
 
                 value={data.variable}
 
@@ -62,6 +73,7 @@ export default function InputNode({ id, data }) {
                 position={Position.Bottom}
             />
 
+        </div>
         </div>
     );
 }

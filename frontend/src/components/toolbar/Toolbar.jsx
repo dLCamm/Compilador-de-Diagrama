@@ -17,8 +17,10 @@ export default function Toolbar({ addNode }) {
       </button>
 
       <button className="button_condicion" onClick={() => addNode("condition")}>
-        <div style={{ transform: "rotate(315deg)", fontSize: "18px" }}>
-          Condición
+        <div className="condition_diamond">
+          <div className="condition_text">
+            Condición
+          </div>
         </div>
       </button>
 

@@ -12,10 +12,11 @@
 }
 
 .button_proceso{
-    padding: 17px;
+    width: 125px;
+    height: 48px;
+    padding: 0;
     border: 3px solid var(--border-forma);
     background: var(--backr-forma);
-    min-Width: 130px;
     text-Align: center;
     color: var(--border-forma);
     font-Weight: bold;
@@ -26,8 +27,20 @@
 }
 
 .button_condicion{
-    width: 100px;
-    height: 100px;
+    width: 125px;
+    height: 78px;
+    border: none;
+    background: transparent;
+    padding: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+}
+
+.condition_diamond{
+    width: 58px;
+    height: 58px;
     background: var(--backr-forma);
     border: 3px solid var(--border-forma);
     color: var(--border-forma);
@@ -40,12 +53,19 @@
     font-Family: Source Code Pro, monospace;
     line-height: 15px;
     font-size: 18px;
-    border-radius: 9px;
-    
+    border-radius: 5px;
+}
+
+.condition_text{
+    transform: rotate(-45deg);
+    text-align: center;
+    font-size: 12px;
 }
 
 .button_inicio_fin{
-    padding: 15px 30px;
+    width: 125px;
+    height: 48px;
+    padding: 0;
     border: 3px solid var(--border-forma);
     border-radius: 50px;
     background: var(--backr-forma);
@@ -61,8 +81,8 @@
 }
 
 .button_entrada_salida{
-    width: 120px;
-    height: 70px;
+    width: 125px;
+    height: 48px;
     background-color: var(--backr-forma); 
     border: 3px solid var(--border-forma);
     color: var(--border-forma);

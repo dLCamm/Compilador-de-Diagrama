@@ -1,6 +1,8 @@
 import { Handle, Position } from "reactflow";
 
 export default function StartEndNode({ data }) {
+  const esInicio = data.label === "Inicio";
+  const esFin = data.label === "Fin";
 
   return (
     <div
@@ -22,17 +24,21 @@ export default function StartEndNode({ data }) {
       }}
     >
 
-      <Handle
-        type="target"
-        position={Position.Top}
-      />
+      {!esInicio && (
+        <Handle
+          type="target"
+          position={Position.Top}
+        />
+      )}
 
       {data.label}
 
-      <Handle
-        type="source"
-        position={Position.Bottom}
-      />
+      {!esFin && (
+        <Handle
+          type="source"
+          position={Position.Bottom}
+        />
+      )}
 
     </div>
   );

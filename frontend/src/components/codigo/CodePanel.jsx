@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./CodePanel.css";
 
 function tokenizeCpp(line) {
@@ -70,151 +70,117 @@ function tokenizeAsm(line) {
   return <span className="var">{line}</span>;
 }
 
-const STATIC_CPP = [
-  "#include <iostream>",
-  "using namespace std;",
-  "",
-  "int main() {",
-  "    int x;",
-  "    cout << \"Ingresa x: \";",
-  "    cin >> x;",
-  "",
-  "    if (x > 0) {",
-  "        cout << \"x es positivo\" << endl;",
-  "    } else {",
-  "        cout << \"x no es positivo\" << endl;",
-  "    }",
-  "",
-  "    return 0;",
-  "}",
-];
+function normalizarEcho(echo, eventos, error) {
+  const tieneErrorEnEcho = echo.some((paso) => paso.ok === false);
 
-const STATIC_ASM = [
-  "section .data",
-  "    msg_pos  db \"x es positivo\", 10, 0",
-  "    msg_neg  db \"x no es positivo\", 10, 0",
-  "    fmt_in   db \"%d\", 0",
-  "",
-  "section .text",
-  "    global main",
-  "    extern printf, scanf",
-  "",
-  "main:",
-  "    push    ebp",
-  "    mov     ebp, esp",
-  "    sub     esp, 4",
-  "",
-  "    lea     eax, [ebp-4]",
-  "    push    eax",
-  "    push    fmt_in",
-  "    call    scanf",
-  "    add     esp, 8",
-  "",
-  "    mov     eax, [ebp-4]",
-  "    cmp     eax, 0",
-  "    jle     .neg",
-  "",
-  ".pos:",
-  "    push    msg_pos",
-  "    call    printf",
-  "    add     esp, 4",
-  "    jmp     .end",
-  "",
-  ".neg:",
-  "    push    msg_neg",
-  "    call    printf",
-  "    add     esp, 4",
-  "",
-  ".end:",
-  "    mov     esp, ebp",
-  "    pop     ebp",
-  "    ret",
-];
+  const lineas = eventos.map((evento) => ({
+    type: "info",
+    prefix: "UI",
+    text: [evento.stage, evento.mensaje].filter(Boolean).join(": "),
+    time: evento.time ? new Date(evento.time) : new Date(),
+    order: evento.order ?? 0,
+  }));
 
-const STATIC_ECHO_STEPS = [
-  { type: "info", prefix: "SYS", text: "Analizando nodos del diagrama...",       delay: 0   },
-  { type: "step", prefix: "→",   text: "Nodo START detectado",                   delay: 350 },
-  { type: "step", prefix: "→",   text: "Nodo PROCESO: lectura de variable x",    delay: 650 },
-  { type: "step", prefix: "→",   text: "Nodo CONDICIÓN: x > 0",                 delay: 950 },
-  { type: "step", prefix: "→",   text: "Rama TRUE  → imprimir positivo",         delay: 1200 },
-  { type: "step", prefix: "→",   text: "Rama FALSE → imprimir no positivo",      delay: 1450 },
-  { type: "step", prefix: "→",   text: "Nodo END alcanzado",                     delay: 1700 },
-  { type: "ok",   prefix: "✓",   text: "Código C++ generado (17 líneas)",        delay: 2100 },
-  { type: "ok",   prefix: "✓",   text: "Código ASM generado (42 líneas)",        delay: 2350 },
-  { type: "ok",   prefix: "✓",   text: "Sin errores detectados",                 delay: 2600 },
-];
+  echo.forEach((paso) => {
+    const type = paso.ok === false ? "error" : paso.ok === true ? "ok" : "info";
+    const prefix = paso.ok === false ? "ERR" : paso.ok === true ? "OK" : "SYS";
+    const mensaje = [paso.stage, paso.mensaje || paso.detalle]
+      .filter(Boolean)
+      .join(": ");
 
-export default function CodePanel({ onGenerate }) {
+    lineas.push({
+      type,
+      prefix,
+      text: mensaje,
+      time: paso.time ? new Date(paso.time) : new Date(),
+      order: paso.order ?? 0,
+    });
+  });
+
+  if (error && !tieneErrorEnEcho) {
+    lineas.push({
+      type: "error",
+      prefix: "ERR",
+      text: error,
+      time: new Date(),
+      order: Number.MAX_SAFE_INTEGER,
+    });
+  }
+
+  return lineas.sort((a, b) => {
+    if (a.order !== b.order) return a.order - b.order;
+    return a.time.getTime() - b.time.getTime();
+  });
+}
+
+export default function CodePanel({
+  codigoC = "",
+  assembler = "",
+  echo = [],
+  eventos = [],
+  status = "idle",
+  error = "",
+  onEchoEvent,
+}) {
   const [activeTab,  setActiveTab]  = useState("cpp");
-  const [status,     setStatus]     = useState("idle");
-  const [cppCode,    setCppCode]    = useState([]);
-  const [asmCode,    setAsmCode]    = useState([]);
-  const [echoLines,  setEchoLines]  = useState([]);
+  const [copiado, setCopiado] = useState(false);
   const echoRef = useRef(null);
-  const timers  = useRef([]);
 
   useEffect(() => {
     if (echoRef.current) {
       echoRef.current.scrollTop = echoRef.current.scrollHeight;
     }
-  }, [echoLines]);
-
-  useEffect(() => () => timers.current.forEach(clearTimeout), []);
-
-  const handleGenerate = () => {
-    timers.current.forEach(clearTimeout);
-    timers.current = [];
-    setStatus("loading");
-    setCppCode([]);
-    setAsmCode([]);
-    setEchoLines([]);
-
-    const t0 = setTimeout(() => {
-      setCppCode(STATIC_CPP);
-      setAsmCode(STATIC_ASM);
-      setStatus("running");
-    }, 400);
-    timers.current.push(t0);
-
-    STATIC_ECHO_STEPS.forEach(({ type, prefix, text, delay }) => {
-      const t = setTimeout(() => {
-        setEchoLines(prev => [
-          ...prev,
-          { type, prefix, text, time: new Date() },
-        ]);
-      }, 400 + delay);
-      timers.current.push(t);
-    });
-
-    const lastDelay = STATIC_ECHO_STEPS.at(-1).delay;
-    const tEnd = setTimeout(() => setStatus("ready"), 400 + lastDelay + 200);
-    timers.current.push(tEnd);
-
-    onGenerate?.();
-  };
+  }, [echo, eventos, error]);
 
   useEffect(() => {
-    window.__codePanelGenerate = handleGenerate;
-    return () => { delete window.__codePanelGenerate; };
-  }, [handleGenerate]);
+    setCopiado(false);
+  }, [activeTab, codigoC, assembler]);
 
+  const cppCode = codigoC ? codigoC.split("\n") : [];
+  const asmCode = assembler ? assembler.split("\n") : [];
+  const echoLines = normalizarEcho(echo, eventos, error);
   const currentCode = activeTab === "cpp" ? cppCode : asmCode;
+  const currentText = activeTab === "cpp" ? codigoC : assembler;
   const hasCode     = currentCode.length > 0;
   const hasEcho     = echoLines.length > 0;
+
+  const copiarCodigo = async () => {
+    if (!currentText) return;
+
+    try {
+      await navigator.clipboard.writeText(currentText);
+      setCopiado(true);
+      onEchoEvent?.(`Codigo ${activeTab === "cpp" ? "C" : "assembler"} copiado`);
+      setTimeout(() => setCopiado(false), 1200);
+    } catch (error) {
+      console.error("No se pudo copiar el codigo.", error);
+    }
+  };
 
   return (
     <div className="code-panel">
 
       <div className="code-window">
         <div className="code-window-header">
+          <div className="code-tabs">
+            <button
+              className={`tab-btn ${activeTab === "cpp" ? "active" : ""}`}
+              onClick={() => setActiveTab("cpp")}
+            >C</button>
+            <button
+              className={`tab-btn ${activeTab === "asm" ? "active" : ""}`}
+              onClick={() => setActiveTab("asm")}
+            >Assembler</button>
+          </div>
+
           <button
-            className={`tab-btn ${activeTab === "cpp" ? "active" : ""}`}
-            onClick={() => setActiveTab("cpp")}
-          >C++</button>
-          <button
-            className={`tab-btn ${activeTab === "asm" ? "active" : ""}`}
-            onClick={() => setActiveTab("asm")}
-          >Assembler</button>
+            className={`copy-btn ${copiado ? "copied" : ""}`}
+            onClick={copiarCodigo}
+            disabled={!currentText}
+            title="Copiar codigo"
+          >
+            {copiado ? "Copiado" : "Copiar"}
+          </button>
         </div>
 
         <div className="code-body">
@@ -234,7 +200,13 @@ export default function CodePanel({ onGenerate }) {
             </div>
           )}
 
-          {(status === "running" || status === "ready") && hasCode && (
+          {status === "error" && !hasCode && (
+            <div className="code-empty">
+              <span>{error || "No se pudo compilar el diagrama."}</span>
+            </div>
+          )}
+
+          {status === "ready" && hasCode && (
             currentCode.map((line, i) => (
               <div className="line-row" key={i}>
                 <span className="line-code">
@@ -267,7 +239,7 @@ export default function CodePanel({ onGenerate }) {
               </div>
             ))
           )}
-          {(status === "loading" || status === "running") && (
+          {status === "loading" && (
             <div className="echo-line">
               <span className="echo-prefix info">›</span>
               <span className="echo-text info"><span className="cursor-blink" /></span>

@@ -22,11 +22,45 @@ const nodeTypes = {
   output: OutputNode
 };
 
+const nombresFigura = {
+  start: "Inicio",
+  end: "Fin",
+  process: "Proceso",
+  condition: "Condicion",
+  input: "Entrada",
+  output: "Salida",
+};
 
-export default function DiagramCanvas({nodes,setNodes,edges,setEdges}) {
+function nombreFigura(node) {
+    if (!node) return "figura desconocida";
+
+    const data = node.data || {};
+
+    if (node.type === "process") return data.code || "Proceso";
+    if (node.type === "condition") return data.expression || "Condicion";
+    if (node.type === "input") return data.variable ? `Entrada ${data.variable}` : "Entrada";
+    if (node.type === "output") return data.expression ? `Salida ${data.expression}` : "Salida";
+
+    return data.label || nombresFigura[node.type] || "figura";
+}
+
+function nombreConexion(edge, nodes) {
+    const source = nodes.find((node) => node.id === edge?.source);
+    const target = nodes.find((node) => node.id === edge?.target);
+    return `${nombreFigura(source)} y ${nombreFigura(target)}`;
+}
+
+
+export default function DiagramCanvas({nodes,setNodes,edges,setEdges,onEchoEvent}) {
 
     const onNodesChange = useCallback(
         (changes) => {
+            changes
+                .filter((change) => change.type === "remove")
+                .forEach((change) => {
+                    const node = nodes.find((item) => item.id === change.id);
+                    onEchoEvent?.(`Se elimino la figura: ${nombreFigura(node)}`);
+                });
 
             setNodes((nds) =>
             applyNodeChanges(changes, nds)
@@ -34,11 +68,17 @@ export default function DiagramCanvas({nodes,setNodes,edges,setEdges}) {
 
         },
 
-        [setNodes]
+        [nodes, setNodes, onEchoEvent]
         );
 
         const onEdgesChange = useCallback(
         (changes) => {
+            changes
+                .filter((change) => change.type === "remove")
+                .forEach((change) => {
+                    const edge = edges.find((item) => item.id === change.id);
+                    onEchoEvent?.(`Se elimino una conexion entre ${nombreConexion(edge, nodes)}`);
+                });
 
             setEdges((eds) =>
             applyEdgeChanges(changes, eds)
@@ -46,7 +86,7 @@ export default function DiagramCanvas({nodes,setNodes,edges,setEdges}) {
 
         },
 
-        [setEdges]
+        [edges, nodes, setEdges, onEchoEvent]
         );
 
   
@@ -75,9 +115,12 @@ export default function DiagramCanvas({nodes,setNodes,edges,setEdges}) {
         setEdges((eds) =>
         addEdge(newEdge, eds)
         );
+        const source = nodes.find((node) => node.id === params.source);
+        const target = nodes.find((node) => node.id === params.target);
+        onEchoEvent?.(`Se creo una conexion entre ${nombreFigura(source)} y ${nombreFigura(target)}`);
     },
 
-    [setEdges]
+    [nodes, setEdges, onEchoEvent]
     );
 
     const addNode = (type) => {
@@ -160,6 +203,7 @@ export default function DiagramCanvas({nodes,setNodes,edges,setEdges}) {
     }
 
     setNodes((nds) => [...nds, newNode]);
+    onEchoEvent?.(`Se creo la figura: ${nombreFigura(newNode)}`);
     };
 
   return (
@@ -179,12 +223,16 @@ export default function DiagramCanvas({nodes,setNodes,edges,setEdges}) {
                         onEdgesChange={onEdgesChange}
                         onConnect={onConnect}
                         nodeTypes={nodeTypes}
-                        fitView
                     >
 
                         <Background />
                         <Controls />
-                        <MiniMap />
+                        <MiniMap
+                            style={{
+                                width: 130,
+                                height: 90
+                            }}
+                        />
 
                     </ReactFlow>
 

@@ -1,4 +1,5 @@
 import { Handle, Position } from "reactflow";
+import NodeHint from "./NodeHint";
 
 export default function ProcessNode({id, data }) {
 
@@ -22,7 +23,18 @@ export default function ProcessNode({id, data }) {
        
         
       }}
+      className="node-hint-wrap"
     >
+      <NodeHint
+        titulo="Proceso"
+        lineas={[
+          "tipo variable = expresion",
+          "variable = expresion",
+          "variable++",
+          "variable--",
+          "Tipos: int, float, double, bool, string",
+        ]}
+      />
 
       <Handle
         type="target"
@@ -30,9 +42,11 @@ export default function ProcessNode({id, data }) {
       />
 
       <textarea
+        className="node-field"
       rows={1}
 
         value={data.code}
+        placeholder="Proceso"
 
         onChange={(e) => {
 

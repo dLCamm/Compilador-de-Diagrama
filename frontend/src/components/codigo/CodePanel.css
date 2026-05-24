@@ -32,6 +32,13 @@
   background: #0e1318;
   border-bottom: 1px solid #2a3a45;
   flex-shrink: 0;
+  justify-content: space-between;
+  position: relative;
+}
+
+.code-tabs {
+  display: flex;
+  flex: 1;
   justify-content: center;
 }
 
@@ -62,6 +69,34 @@
   left: 0; right: 0;
   height: 2px;
   background: #2ea87e;
+}
+
+.copy-btn {
+  font-family: 'Staatliches', system-ui, sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  padding: 0 12px;
+  border: none;
+  border-left: 1px solid #2a3a45;
+  background: #121922;
+  color: #7d9aaa;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+
+.copy-btn:hover:not(:disabled) {
+  color: #d4e5ee;
+  background: #18232d;
+}
+
+.copy-btn.copied {
+  color: #0e1318;
+  background: #2ea87e;
+}
+
+.copy-btn:disabled {
+  color: #344653;
+  cursor: default;
 }
 
 /* ── Cuerpo del código ── */
@@ -167,13 +202,19 @@
 }
 
 .echo-line {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 1px 0;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 58px;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 6px;
   font-size: 11px;
-  line-height: 1.6;
+  line-height: 1.35;
   animation: fadeInLine 0.15s ease;
+  border-bottom: 1px solid rgba(42, 58, 69, 0.28);
+}
+
+.echo-line:last-child {
+  border-bottom: none;
 }
 
 @keyframes fadeInLine {
@@ -184,25 +225,37 @@
 .echo-prefix {
   font-family: 'Share Tech Mono', monospace;
   font-size: 10.5px;
-  flex-shrink: 0;
-  min-width: 16px;
+  min-width: 0;
+  text-align: center;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 1px 3px;
 }
 
 .echo-prefix.info { color: #3d5a6e; }
 .echo-prefix.ok   { color: #2ea87e; }
-.echo-prefix.err  { color: #c04040; }
+.echo-prefix.error  { color: #c04040; }
 .echo-prefix.step { color: #3d5a6e; }
 
 .echo-text {
   font-family: 'Share Tech Mono', monospace;
   font-size: 11px;
-  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .echo-text.info { color: #4a6a7a; }
 .echo-text.ok   { color: #4a6a7a; }
-.echo-text.err  { color: #c04040; }
+.echo-text.error  { color: #c04040; }
 .echo-text.step { color: #4a6a7a; }
+
+.echo-timestamp {
+  color: #2f4552;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 10px;
+  text-align: right;
+  white-space: nowrap;
+}
 
 /* Cursor parpadeante (estado loading/running) */
 .cursor-blink {

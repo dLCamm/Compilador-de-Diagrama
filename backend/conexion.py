@@ -1,5 +1,6 @@
 from generador import generar_assembler, generar_cpp
 from lexico import ErrorLexico, analizar_diagrama
+from semantico import ErrorSemantico, analizar_semantica
 from sintactico_ast import ErrorSintactico, ParserAST
 
 
@@ -27,7 +28,9 @@ def procesar_codigo_c(data):
         ok=True,
         stage="codigoC",
         mensaje="Traduccion a C generada correctamente.",
+        warnings=respuesta["warnings"],
         resultado={
+            "semantica": respuesta["resultado"]["semantica"],
             "codigoC": respuesta["resultado"]["codigoC"],
         },
     )
@@ -43,7 +46,9 @@ def procesar_assembler(data):
         ok=True,
         stage="assembler",
         mensaje="Traduccion a assembler generada correctamente.",
+        warnings=respuesta["warnings"],
         resultado={
+            "semantica": respuesta["resultado"]["semantica"],
             "assembler": respuesta["resultado"]["assembler"],
         },
     )
@@ -137,6 +142,10 @@ def _procesar_compilacion(data):
         ast_serializado = ast.serializar()
         echo.append(_paso_echo("sintactico", "AST construido correctamente.", ok=True, detalle={"ast": ast_serializado}))
 
+        echo.append(_paso_echo("semantico", "Ejecutando analisis semantico."))
+        semantica = analizar_semantica(ast)
+        echo.append(_paso_echo("semantico", "Analisis semantico completado.", ok=True, detalle={"semantica": semantica}))
+
         echo.append(_paso_echo("generacion_c", "Generando codigo C."))
         codigo_cpp = generar_cpp(ast)
         echo.append(_paso_echo("generacion_c", "Codigo C generado correctamente.", ok=True, detalle={"codigoC": codigo_cpp}))
@@ -145,17 +154,25 @@ def _procesar_compilacion(data):
         assembler = generar_assembler(ast)
         echo.append(_paso_echo("generacion_assembler", "Codigo assembler generado correctamente.", ok=True, detalle={"assembler": assembler}))
     except ErrorLexico as error:
-        echo.append(_paso_echo("lexico", str(error), ok=False))
+        mensaje = _mensaje_error_usuario(error, data)
+        echo.append(_paso_echo("lexico", mensaje, ok=False))
         _guardar_ultimo_echo(echo)
-        return _respuesta(ok=False, stage="lexico", errores=[str(error)], resultado={"echo": echo})
+        return _respuesta(ok=False, stage="lexico", errores=[mensaje], resultado={"echo": echo})
     except ErrorSintactico as error:
-        echo.append(_paso_echo("sintactico", str(error), ok=False))
+        mensaje = _mensaje_error_usuario(error, data)
+        echo.append(_paso_echo("sintactico", mensaje, ok=False))
         _guardar_ultimo_echo(echo)
-        return _respuesta(ok=False, stage="sintactico", errores=[str(error)], resultado={"echo": echo})
+        return _respuesta(ok=False, stage="sintactico", errores=[mensaje], resultado={"echo": echo})
+    except ErrorSemantico as error:
+        mensaje = _mensaje_error_usuario(error, data)
+        echo.append(_paso_echo("semantico", mensaje, ok=False))
+        _guardar_ultimo_echo(echo)
+        return _respuesta(ok=False, stage="semantico", errores=[mensaje], resultado={"echo": echo})
     except ValueError as error:
-        echo.append(_paso_echo("estructura", str(error), ok=False))
+        mensaje = _mensaje_error_usuario(error, data)
+        echo.append(_paso_echo("estructura", mensaje, ok=False))
         _guardar_ultimo_echo(echo)
-        return _respuesta(ok=False, stage="estructura", errores=[str(error)], resultado={"echo": echo})
+        return _respuesta(ok=False, stage="estructura", errores=[mensaje], resultado={"echo": echo})
 
     respuesta = _respuesta(
         ok=True,
@@ -164,10 +181,12 @@ def _procesar_compilacion(data):
         resultado={
             "tokens": tokens,
             "ast": ast_serializado,
+            "semantica": semantica,
             "codigoC": codigo_cpp,
             "assembler": assembler,
             "echo": echo,
         },
+        warnings=semantica.get("warnings", []),
     )
     _guardar_ultimo_echo(echo)
     return respuesta
@@ -181,6 +200,39 @@ def _guardar_ultima_compilacion(respuesta):
 def _guardar_ultimo_echo(echo):
     global _ultimo_echo
     _ultimo_echo = echo
+
+
+def _mensaje_error_usuario(error, data):
+    mensaje = str(error)
+    for node_id, nombre in _mapa_nombres_figuras(data).items():
+        mensaje = mensaje.replace(node_id, nombre)
+    return mensaje.replace("nodo", "figura").replace("Nodo", "Figura")
+
+
+def _mapa_nombres_figuras(data):
+    flow = data.get("flow", {}) if isinstance(data, dict) else {}
+    nodes = flow.get("nodes", []) if isinstance(flow, dict) else []
+    return {
+        node.get("id"): _nombre_figura(node)
+        for node in nodes
+        if isinstance(node, dict) and node.get("id")
+    }
+
+
+def _nombre_figura(node):
+    data = node.get("data") or {}
+    node_type = node.get("type")
+    if node_type == "process":
+        return data.get("code") or data.get("label") or "Proceso"
+    if node_type == "condition":
+        return data.get("expression") or data.get("label") or "Condicion"
+    if node_type == "input":
+        variable = data.get("variable") or data.get("label")
+        return f"Entrada {variable}" if variable else "Entrada"
+    if node_type == "output":
+        expression = data.get("expression") or data.get("label")
+        return f"Salida {expression}" if expression else "Salida"
+    return data.get("label") or node_type or "figura"
 
 
 def _paso_echo(stage, mensaje, ok=None, detalle=None):

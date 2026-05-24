@@ -1,8 +1,20 @@
 import { Handle, Position } from "reactflow";
+import NodeHint from "./NodeHint";
 
 export default function OutputNode({ id, data }) {
 
     return (
+
+        <div className="node-hint-wrap node-hint-wrap-io">
+            <NodeHint
+                titulo="Salida"
+                lineas={[
+                    "variable",
+                    '"texto"',
+                    '"texto", variable',
+                    '"texto", variable, expresion',
+                ]}
+            />
 
         <div
             style={{
@@ -24,6 +36,7 @@ export default function OutputNode({ id, data }) {
             />
 
             <input
+                className="node-field"
 
                 value={data.expression}
 
@@ -62,6 +75,7 @@ export default function OutputNode({ id, data }) {
                 position={Position.Bottom}
             />
 
+        </div>
         </div>
     );
 }

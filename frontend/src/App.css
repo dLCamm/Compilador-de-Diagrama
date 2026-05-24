@@ -61,9 +61,15 @@
   color: white;
   font-family: 'Staatliches', system-ui, sans-serif;
   font-size: 18px;
-  position: absolute;
   border-radius: 8px;
   cursor: pointer;
 }
 
+.boton-icono{
+  width: 46px;
+  color: white;
+}
 
+.boton-icono svg{
+  display: block;
+}

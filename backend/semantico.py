@@ -1,192 +1,312 @@
-# Analizador semantico: variables, tipos y reglas del programa.
-from sintactico_ast import *
+# Analizador semantico compatible con el AST generado desde el diagrama.
+
+from sintactico_ast import (
+    NodoAsignacion,
+    NodoBooleano,
+    NodoCadena,
+    NodoEntrada,
+    NodoFin,
+    NodoFor,
+    NodoIdentificador,
+    NodoIf,
+    NodoLlamadaFuncion,
+    NodoNumero,
+    NodoOperacion,
+    NodoPrint,
+    NodoProceso,
+    NodoPrograma,
+    NodoUnario,
+    NodoWhile,
+)
+
+
+class ErrorSemantico(Exception):
+    pass
 
 
 class TablaSimbolos:
+    TIPOS_VALIDOS = {"int", "float", "double", "bool", "string"}
+
     def __init__(self):
-        self.variables = {} # Almacena variables {nombre: tipo}
-        self.funciones = {} # Almacena funciones {nombre: (tipo_retorno, [parametros])}
-        self.cadenas = {} # Almacena cadenas {nombre: valor}
-        self.flotantes = {}
+        self.ambitos = [{}]
+        self.declaradas = {}
 
-    def modificar_cadena(self, nombre, valor):
-        if nombre in self.cadenas:
-            self.cadenas[nombre] = valor
+    def entrar_ambito(self):
+        self.ambitos.append({})
 
-    def declarar_flotante(self, nombre, valor):
-        if nombre in self.flotantes:
-            raise Exception(f"Error: Numero '{nombre}' ya declarado")
-        self.flotantes[nombre] = valor
-    def declarar_cadena(self, nombre, valor):
-        if nombre in self.cadenas:
-            raise Exception(f"Error: Cadena '{nombre}' ya declarada")
-        self.cadenas[nombre] = valor
+    def salir_ambito(self):
+        if len(self.ambitos) == 1:
+            raise ErrorSemantico("No se puede salir del ambito global.")
+        self.ambitos.pop()
 
-    def declarar_variable(self, nombre, tipo):
-        if nombre in self.variables:
-            raise Exception(f"Error: Variable '{nombre}' ya declarada")
-        self.variables[nombre] = tipo
+    def declarar_variable(self, nombre, tipo, ubicacion=""):
+        self._validar_nombre(nombre, ubicacion)
+        self._validar_tipo(tipo, ubicacion)
+        ambito = self.ambitos[-1]
+        if nombre in ambito:
+            sufijo = self._sufijo_ubicacion(ubicacion)
+            raise ErrorSemantico(
+                f"La variable '{nombre}' ya existe{sufijo}. Usa otro nombre o no la declares dos veces."
+            )
+        ambito[nombre] = tipo
+        self.declaradas[nombre] = tipo
 
-    def obtener_tipo_variable(self, nombre):
-        if nombre not in self.variables:
-            raise Exception(f"Error: Variable '{nombre}' no declarada")
-        return self.variables[nombre]
+    def asignar_variable(self, nombre, tipo_expr, ubicacion=""):
+        tipo_actual = self.obtener_tipo_variable(nombre, ubicacion)
+        if not SistemaTipos.es_asignable(tipo_actual, tipo_expr):
+            raise ErrorSemantico(
+                f"No se puede guardar un valor de tipo {tipo_expr} en la variable '{nombre}', porque esa variable es de tipo {tipo_actual}."
+            )
 
-    def declarar_funcion(self, nombre, tipo_retorno, parametros):
-        if nombre in self.funciones:
-            raise Exception(f"Error: Función '{nombre}' ya declarada")
-        self.funciones[nombre] = (tipo_retorno, parametros)
-    
-    def obtener_info_funcion(self, nombre):
-        if nombre not in self.funciones:
-            raise Exception(f"Error: Función '{nombre}' no declarada")
-        return self.funciones[nombre]
+    def obtener_tipo_variable(self, nombre, ubicacion=""):
+        for ambito in reversed(self.ambitos):
+            if nombre in ambito:
+                return ambito[nombre]
+        sufijo = self._sufijo_ubicacion(ubicacion)
+        raise ErrorSemantico(
+            f"La variable '{nombre}' no existe{sufijo}. Antes de usarla debes crearla con una figura de entrada o con un proceso, por ejemplo: int {nombre} = 0."
+        )
 
-# start llama a main
+    def serializar(self):
+        return dict(self.declaradas)
+
+    def _validar_tipo(self, tipo, ubicacion=""):
+        if tipo not in self.TIPOS_VALIDOS:
+            sufijo = self._sufijo_ubicacion(ubicacion)
+            raise ErrorSemantico(
+                f"El tipo de dato '{tipo}' no esta permitido{sufijo}. Usa int, float, double, bool o string."
+            )
+
+    def _validar_nombre(self, nombre, ubicacion=""):
+        if not nombre or not nombre.replace("_", "a").isalnum() or nombre[0].isdigit():
+            sufijo = self._sufijo_ubicacion(ubicacion)
+            raise ErrorSemantico(
+                f"El nombre de variable '{nombre}' no es valido{sufijo}. Escribe solo el nombre, por ejemplo: edad. No escribas 'Leer edad'."
+            )
+
+    def _sufijo_ubicacion(self, ubicacion):
+        return f" en figura '{ubicacion}'" if ubicacion else ""
+
+
+class SistemaTipos:
+    NUMERICOS = {"int", "float", "double"}
+
+    @staticmethod
+    def es_numerico(tipo):
+        return tipo in SistemaTipos.NUMERICOS
+
+    @staticmethod
+    def es_asignable(tipo_destino, tipo_origen):
+        if tipo_destino == tipo_origen:
+            return True
+        if tipo_destino in {"float", "double"} and tipo_origen in {"int", "float"}:
+            return True
+        if tipo_destino == "bool" and tipo_origen in {"int", "bool"}:
+            return True
+        return False
+
+    @staticmethod
+    def tipo_resultante(tipo_izq, tipo_der, operador):
+        if operador in {"<", ">", "<=", ">=", "==", "!=", "&&", "||"}:
+            return "bool"
+        if tipo_izq == "string" or tipo_der == "string":
+            if operador == "+" and tipo_izq == tipo_der == "string":
+                return "string"
+            raise ErrorSemantico(f"Operacion no valida con string: {tipo_izq} {operador} {tipo_der}.")
+        if not SistemaTipos.es_numerico(tipo_izq) or not SistemaTipos.es_numerico(tipo_der):
+            raise ErrorSemantico(f"Operacion no valida: {tipo_izq} {operador} {tipo_der}.")
+        if "double" in {tipo_izq, tipo_der}:
+            return "double"
+        if "float" in {tipo_izq, tipo_der}:
+            return "float"
+        return "int"
+
+    @staticmethod
+    def validar_condicion(tipo, contexto):
+        if tipo not in {"bool", "int"}:
+            raise ErrorSemantico(f"La condicion de {contexto} debe ser bool o int, recibio {tipo}.")
+
 
 class AnalizadorSemantico:
     def __init__(self):
         self.tabla_simbolos = TablaSimbolos()
-        self.contador_cadenas = 0
+        self.warnings = []
+        self.contexto_figura = ""
+
     def analizar(self, nodo):
+        metodo = f"visitar_{type(nodo).__name__}"
+        if not hasattr(self, metodo):
+            raise ErrorSemantico(f"No se ha implementado analisis semantico para {type(nodo).__name__}.")
+
+        contexto_anterior = self.contexto_figura
+        nuevo_contexto = self._nombre_figura(nodo)
+        if nuevo_contexto:
+            self.contexto_figura = nuevo_contexto
+
+        try:
+            return getattr(self, metodo)(nodo)
+        finally:
+            self.contexto_figura = contexto_anterior
+
+    def visitar_NodoPrograma(self, nodo):
+        for instruccion in nodo.instrucciones:
+            self.analizar(instruccion)
+        return {
+            "simbolos": self.tabla_simbolos.serializar(),
+            "warnings": self.warnings,
+        }
+
+    def visitar_NodoEntrada(self, nodo):
+        self.tabla_simbolos.declarar_variable(nodo.nombre[1], nodo.tipo[1], self.contexto_figura)
+        return nodo.tipo[1]
+
+    def visitar_NodoAsignacion(self, nodo):
+        tipo_expr = self.analizar(nodo.expresion)
+        nombre = nodo.nombre[1]
+
+        if nodo.tipo is not None:
+            tipo_declarado = nodo.tipo[1]
+            self.tabla_simbolos.declarar_variable(nombre, tipo_declarado, self.contexto_figura)
+            if not SistemaTipos.es_asignable(tipo_declarado, tipo_expr):
+                raise ErrorSemantico(
+                    f"No se puede iniciar la variable '{nombre}' con un valor de tipo {tipo_expr}, porque fue declarada como {tipo_declarado}."
+                )
+            return tipo_declarado
+
+        self.tabla_simbolos.asignar_variable(nombre, tipo_expr, self.contexto_figura)
+        return self.tabla_simbolos.obtener_tipo_variable(nombre, self.contexto_figura)
+
+    def visitar_NodoProceso(self, nodo):
+        self.warnings.append(
+            f"No se valido semanticamente el proceso '{nodo.expresion}' en figura '{self.contexto_figura}'."
+        )
+        return "void"
+
+    def visitar_NodoPrint(self, nodo):
+        for argumento in nodo.argumentos:
+            self.analizar(argumento)
+        return "void"
+
+    def visitar_NodoIf(self, nodo):
+        tipo_condicion = self.analizar(nodo.condicion)
+        SistemaTipos.validar_condicion(tipo_condicion, "if")
+
+        self.tabla_simbolos.entrar_ambito()
+        for instruccion in nodo.cuerpo:
+            self.analizar(instruccion)
+        self.tabla_simbolos.salir_ambito()
+
+        self.tabla_simbolos.entrar_ambito()
+        for instruccion in nodo.sino:
+            self.analizar(instruccion)
+        self.tabla_simbolos.salir_ambito()
+        return "void"
+
+    def visitar_NodoWhile(self, nodo):
+        tipo_condicion = self.analizar(nodo.condicion)
+        SistemaTipos.validar_condicion(tipo_condicion, "while")
+
+        self.tabla_simbolos.entrar_ambito()
+        for instruccion in nodo.cuerpo:
+            self.analizar(instruccion)
+        self.tabla_simbolos.salir_ambito()
+        return "void"
+
+    def visitar_NodoFor(self, nodo):
+        self.analizar(nodo.init)
+
+        tipo_condicion = self.analizar(nodo.condicion)
+        SistemaTipos.validar_condicion(tipo_condicion, "for")
+
+        self.tabla_simbolos.entrar_ambito()
+        for instruccion in nodo.cuerpo:
+            self.analizar(instruccion)
+        self.tabla_simbolos.salir_ambito()
+
+        self.analizar(nodo.incremento)
+        return "void"
+
+    def visitar_NodoOperacion(self, nodo):
+        tipo_izq = self.analizar(nodo.izquierda)
+        tipo_der = self.analizar(nodo.derecha)
+        operador = nodo.operador[1]
+
+        if operador in {"&&", "||"}:
+            SistemaTipos.validar_condicion(tipo_izq, "operador logico")
+            SistemaTipos.validar_condicion(tipo_der, "operador logico")
+            return "bool"
+
+        if operador in {"==", "!="}:
+            if tipo_izq != tipo_der and not (
+                SistemaTipos.es_numerico(tipo_izq) and SistemaTipos.es_numerico(tipo_der)
+            ):
+                raise ErrorSemantico(
+                    f"La comparacion no es valida: estas comparando {tipo_izq} con {tipo_der}."
+                )
+            return "bool"
+
+        if operador in {"<", ">", "<=", ">="}:
+            if not SistemaTipos.es_numerico(tipo_izq) or not SistemaTipos.es_numerico(tipo_der):
+                raise ErrorSemantico(
+                    f"La comparacion usa valores que no son numericos: {tipo_izq} {operador} {tipo_der}."
+                )
+            return "bool"
+
+        return SistemaTipos.tipo_resultante(tipo_izq, tipo_der, operador)
+
+    def visitar_NodoUnario(self, nodo):
+        tipo = self.analizar(nodo.expresion)
+        operador = nodo.operador[1]
+        if operador == "!":
+            SistemaTipos.validar_condicion(tipo, "operador !")
+            return "bool"
+        if operador == "-":
+            if not SistemaTipos.es_numerico(tipo):
+                raise ErrorSemantico(f"El operador - requiere tipo numerico, recibio {tipo}.")
+            return tipo
+        raise ErrorSemantico(f"Operador unario no soportado: {operador}.")
+
+    def visitar_NodoIdentificador(self, nodo):
+        return self.tabla_simbolos.obtener_tipo_variable(nodo.nombre[1], self.contexto_figura)
+
+    def visitar_NodoNumero(self, nodo):
+        return "float" if "." in str(nodo.valor[1]) else "int"
+
+    def visitar_NodoCadena(self, nodo):
+        return "string"
+
+    def visitar_NodoBooleano(self, nodo):
+        return "bool"
+
+    def visitar_NodoLlamadaFuncion(self, nodo):
+        self.warnings.append(
+            f"No se pudo validar la llamada a funcion '{nodo.nombre_funcion}'; se asumio retorno int."
+        )
+        for argumento in nodo.argumentos:
+            self.analizar(argumento)
+        return "int"
+
+    def visitar_NodoFin(self, nodo):
+        return "void"
+
+    def _nombre_figura(self, nodo):
+        label = getattr(nodo, "label", "")
+        if label:
+            return label
+        if isinstance(nodo, NodoEntrada):
+            return f"Leer {nodo.nombre[1]}"
         if isinstance(nodo, NodoAsignacion):
-            tipo_expr = self.analizar(nodo.expresion)
-            # Verificar si la variable ya existe (puede ser un parámetro)
-            if nodo.nombre[1] not in self.tabla_simbolos.variables:
-                self.tabla_simbolos.declarar_variable(nodo.nombre[1], tipo_expr)
-            else:
-                tipo_existente = self.tabla_simbolos.obtener_tipo_variable(nodo.nombre[1])
-                if tipo_existente != tipo_expr:
-                    raise Exception(f"Error: Tipo incompatible en asignación para '{nodo.nombre[1]}' (esperaba {tipo_existente}, recibió {tipo_expr})")
-        elif isinstance(nodo, NodoPrint):
-            if isinstance(nodo.variable, NodoCadena):
-                nombre_cadena = f"cadena_{self.contador_cadenas}"
-                self.contador_cadenas += 1
-                self.tabla_simbolos.declarar_cadena(nombre_cadena, nodo.variable.valor)
-                nodo.variable = NodoIdentificador(('IDENTIFIER', nombre_cadena), 'str')  
-            elif isinstance(nodo.variable, NodoIdentificador):
-                # Verificar si la variable existe
-                tipo = self.tabla_simbolos.obtener_tipo_variable(nodo.variable.nombre[1])
-                if tipo == 'str':
-                    nodo.variable.tipo = 'str'
-                elif tipo == 'int':
-                    nodo.variable.tipo = 'int'
-                elif tipo == 'float':
-                    nodo.variable.tipo = 'float'
-                elif tipo == 'char':
-                    nodo.variable.tipo = 'char'
-                else:
-                    raise Exception(f"Error: Tipo de variable '{nodo.variable.nombre[1]}' no soportado en print")            
-
-        elif isinstance(nodo, NodoNumero):
-            # Comprobar si el número es entero o decimal
-            if isinstance(nodo.valor, int):
-                return "int"
-            elif isinstance(nodo.valor, float):
-                const_float = f"const_float_{str(nodo.valor).replace('.', '_')}"
-                self.tabla_simbolos.declarar_flotante(const_float, nodo.valor)
-                self.tabla_simbolos.declarar_variable(const_float, 'float')
-                return "float"
-            return "int"  # Por defecto, consideramos que es un entero
+            return nodo.traducirCpp().splitlines()[0].rstrip(";")
+        if isinstance(nodo, NodoPrint):
+            return "Salida"
+        if isinstance(nodo, NodoIf):
+            return nodo.condicion.traducirCpp()
+        if isinstance(nodo, NodoWhile):
+            return nodo.condicion.traducirCpp()
+        if isinstance(nodo, NodoFor):
+            return "For"
+        return ""
 
 
-        elif isinstance(nodo, NodoPrintList): # NodoPrintList es una lista que contiene varios NodoPrint
-            for variablePrint in nodo.variables:
-                self.analizar(variablePrint)
-
-
-        elif isinstance(nodo, NodoDeclaracionVariable):
-            # Verificar si la variable ya existe
-            if nodo.nombre[1] in self.tabla_simbolos.variables:
-                raise Exception(f"Error: Variable '{nodo.nombre[1]}' ya declarada")
-            # Declarar la variable en la tabla de símbolos
-            self.tabla_simbolos.declarar_variable(nodo.nombre[1], nodo.tipo)
-        elif isinstance(nodo, NodoIdentificador):
-            if nodo.tipo == 'None':
-                tipo = self.tabla_simbolos.obtener_tipo_variable(nodo.nombre[1])
-                nodo.tipo = tipo
-            return self.tabla_simbolos.obtener_tipo_variable(nodo.nombre[1])
-
-        elif isinstance(nodo, NodoCadena):
-            return "str"
-        elif isinstance(nodo, NodoAsignacionCadena):
-            nombre_cadena = nodo.nombre[1]
-            cadena = nodo.expresion
-            # Verificar si la cadena ya existe
-            if nombre_cadena in self.tabla_simbolos.cadenas:
-                self.tabla_simbolos.modificar_cadena(nombre_cadena, cadena)
-            else:
-                self.tabla_simbolos.declarar_cadena(nombre_cadena, cadena)
-                self.tabla_simbolos.declarar_variable(nombre_cadena, 'str')
-        elif isinstance(nodo, NodoOperacion):
-            new = nodo.simplificar()
-            tipo_izq = self.analizar(new.izquierda)
-            tipo_der = self.analizar(new.derecha)
-            if tipo_izq == tipo_der:
-                nodo.tipo = tipo_izq
-                return tipo_izq
-            elif 'float' in [tipo_izq, tipo_der] and 'int' in [tipo_izq, tipo_der]:
-                nodo.tipo = 'float'
-                return 'float'
-            else:
-                raise Exception(f"Error: Tipos incompatibles en operación: {tipo_izq} {nodo.operador[1]} {tipo_der}")
-
-        elif isinstance(nodo, NodoFuncion):
-            # Registrar la función en la tabla de símbolos
-            self.tabla_simbolos.declarar_funcion(nodo.nombre[1], nodo.tipo_retorno[1], nodo.parametros)
-
-            # Registrar los parámetros en la tabla de variables
-            for param in nodo.parametros:
-                self.tabla_simbolos.declarar_variable(param.nombre[1], param.tipo[1])            
-            # Analizar el cuerpo de la función
-            for instruccion in nodo.cuerpo:
-                self.analizar(instruccion)
-        elif isinstance(nodo, NodoIf):
-            tipo_condicion = self.analizar(nodo.condicion)
-            if tipo_condicion != 'int':
-                raise Exception(f"Error: Tipo de condición no válida en if (esperado 'int', recibido '{tipo_condicion}')")
-            # Analizar el cuerpo del if
-            for instruccion in nodo.cuerpo:
-                self.analizar(instruccion)
-            # Analizar el cuerpo del else (si existe)
-            if nodo.sino:
-                for instruccion in nodo.sino:
-                    self.analizar(instruccion)
-        elif isinstance(nodo, NodoWhile):
-            # Analizar la condición
-            tipo_condicion = self.analizar(nodo.condicion)
-            if tipo_condicion != 'int':
-                raise Exception(f"Error: Tipo de condición no válida en while (esperado 'int', recibido '{tipo_condicion}')")
-            # Analizar el cuerpo del while
-            for instruccion in nodo.cuerpo:
-                self.analizar(instruccion)
-
-                
-        elif isinstance(nodo, NodoLlamadaFuncion):
-            tipo_retorno, parametros = self.tabla_simbolos.obtener_info_funcion(nodo.nombre[1])
-            if len(nodo.argumentos) != len(parametros):
-                raise Exception(f"Error: La función '{nodo.nombre[1]}' espera {len(parametros)} argumentos, pero recibió {len(nodo.argumentos)}")
-            return tipo_retorno
-        elif isinstance(nodo, NodoPrograma):
-            for funcion in nodo.funciones:
-                self.analizar(funcion)
-        elif isinstance(nodo, NodoInput):
-            # Verificar si la variable existe
-            if isinstance(nodo.variable, NodoIdentificador):
-                tipo = self.tabla_simbolos.obtener_tipo_variable(nodo.variable.nombre[1])
-                # Cambiar el tipo de la variable a 'int' o 'str' dependiendo de la entrada del texto
-                if tipo == 'int':
-                    nodo.variable.tipo = 'int'
-                elif tipo == 'str':
-                    nodo.variable.tipo = 'str'
-                elif tipo == 'float':
-                    nodo.variable.tipo = 'float'
-                elif tipo == 'char':
-                    nodo.variable.tipo = 'char'
-                else:
-                    raise Exception(f"Error: Tipo de variable '{nodo.variable.nombre[1]}' no soportado en input")
-                
-            else:
-                raise Exception(f"Error: La variable '{nodo.variable}' no está declarada")
-        elif isinstance(nodo, NodoRetorno):
-            tipo_expr = self.analizar(nodo.expresion)
+def analizar_semantica(programa):
+    return AnalizadorSemantico().analizar(programa)
