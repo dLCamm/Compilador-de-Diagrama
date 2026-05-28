@@ -510,6 +510,11 @@ class NodoPrograma(NodoAST):
                 if variable not in vistas:
                     variables.append(variable)
                     vistas.add(variable)
+            elif isinstance(instruccion, NodoDeclaracion):
+                variable = (instruccion.tipo[1], instruccion.nombre[1])
+                if variable not in vistas:
+                    variables.append(variable)
+                    vistas.add(variable)
             elif isinstance(instruccion, NodoIf):
                 pendientes.extend(instruccion.cuerpo)
                 pendientes.extend(instruccion.sino or [])
@@ -1067,6 +1072,36 @@ class NodoAsignacion(NodoAST):
             "data_type": self.tipo[1] if self.tipo else None,
             "variable": self.nombre[1],
             "expresion": self.expresion.serializar(),
+        }
+
+
+class NodoDeclaracion(NodoAST):
+    # Nodo para procesos como "int edad" o "string nombre".
+    def __init__(self, tipo, nombre, node_id="", label=""):
+        self.tipo = tipo
+        self.nombre = nombre
+        self.node_id = node_id
+        self.label = label
+
+    def traducirCpp(self):
+        tipo = self.tipo[1]
+        nombre = self.nombre[1]
+
+        if tipo == "string":
+            return f"char {nombre}[256];"
+
+        return f"{_tipo_c(tipo)} {nombre};"
+
+    def generarCodigo(self):
+        return f"    ; declarar {self.tipo[1]} {self.nombre[1]}"
+
+    def serializar(self):
+        return {
+            "tipo": "NodoDeclaracion",
+            "node_id": self.node_id,
+            "label": self.label,
+            "data_type": self.tipo[1],
+            "variable": self.nombre[1],
         }
 
 
@@ -2120,6 +2155,8 @@ class ParserSentencia:
             return NodoProceso(self.codigo_original, node_id=self.node_id, label=self.label)
         if self._es_declaracion():
             nodo = self.asignacion(con_tipo=True)
+        elif self._es_declaracion_sin_valor():
+            nodo = self.declaracion()
         elif self._es_reasignacion():
             nodo = self.asignacion(con_tipo=False)
         elif self._es_incremento():
@@ -2171,6 +2208,11 @@ class ParserSentencia:
         self.pos = fin
         return NodoAsignacion(tipo, nombre, expresion, node_id=self.node_id, label=self.label)
 
+    def declaracion(self):
+        tipo = self.coincidir("KEYWORD")
+        nombre = self.coincidir("IDENTIFIER")
+        return NodoDeclaracion(tipo, nombre, node_id=self.node_id, label=self.label)
+
     def incremento(self, valor):
         nombre = self.coincidir("IDENTIFIER")
         operador = self.coincidir("OPERATOR")
@@ -2188,6 +2230,18 @@ class ParserSentencia:
             and self.tokens[0][1] in self.TIPOS
             and self.tokens[1][0] == "IDENTIFIER"
             and self.tokens[2] == ("OPERATOR", "=")
+        )
+
+    def _es_declaracion_sin_valor(self):
+        return (
+            len(self.tokens) >= 2
+            and self.tokens[0][0] == "KEYWORD"
+            and self.tokens[0][1] in self.TIPOS
+            and self.tokens[1][0] == "IDENTIFIER"
+            and (
+                len(self.tokens) == 2
+                or self.tokens[2] == ("DELIMITER", ";")
+            )
         )
 
     def _es_reasignacion(self):

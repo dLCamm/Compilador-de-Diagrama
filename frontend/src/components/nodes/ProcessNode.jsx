@@ -28,6 +28,7 @@ export default function ProcessNode({id, data }) {
       <NodeHint
         titulo="Proceso"
         lineas={[
+          "tipo variable",
           "tipo variable = expresion",
           "variable = expresion",
           "variable++",

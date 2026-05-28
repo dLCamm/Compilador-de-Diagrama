@@ -4,6 +4,7 @@ from sintactico_ast import (
     NodoAsignacion,
     NodoBooleano,
     NodoCadena,
+    NodoDeclaracion,
     NodoEntrada,
     NodoFin,
     NodoFor,
@@ -185,6 +186,10 @@ class AnalizadorSemantico:
         self.tabla_simbolos.asignar_variable(nombre, tipo_expr, self.contexto_figura)
         return self.tabla_simbolos.obtener_tipo_variable(nombre, self.contexto_figura)
 
+    def visitar_NodoDeclaracion(self, nodo):
+        self.tabla_simbolos.declarar_variable(nodo.nombre[1], nodo.tipo[1], self.contexto_figura)
+        return nodo.tipo[1]
+
     def visitar_NodoProceso(self, nodo):
         self.warnings.append(
             f"No se valido semanticamente el proceso '{nodo.expresion}' en figura '{self.contexto_figura}'."
@@ -306,6 +311,8 @@ class AnalizadorSemantico:
             return f"Leer {nodo.nombre[1]}"
         if isinstance(nodo, NodoAsignacion):
             return nodo.traducirCpp().splitlines()[0].rstrip(";")
+        if isinstance(nodo, NodoDeclaracion):
+            return nodo.traducirCpp().rstrip(";")
         if isinstance(nodo, NodoPrint):
             return "Salida"
         if isinstance(nodo, NodoIf):
