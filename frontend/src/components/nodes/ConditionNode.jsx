@@ -56,14 +56,28 @@ export default function ConditionNode({id, data }) {
       >
         <Handle
           type="source"
-          position={Position.Bottom}
+          position={Position.Left}
           id="true"
+
+          style={{
+            left: -5,
+            bottom: -5,
+            top: "auto",
+          
+          }}
         />
 
         <Handle
           type="source"
           position={Position.Right}
           id="false"
+
+          style={{
+            right: -5,
+            bottom: 115,
+            top: "auto",
+           
+          }}
         />
 
         <input

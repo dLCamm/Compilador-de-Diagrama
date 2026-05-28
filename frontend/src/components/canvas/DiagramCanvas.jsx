@@ -1,4 +1,4 @@
-import {ReactFlow, Background,Controls,MiniMap,addEdge,useNodesState,useEdgesState, applyNodeChanges, applyEdgeChanges} from "reactflow";
+import {ReactFlow, Background,Controls,MiniMap,addEdge,useNodesState,useEdgesState, applyNodeChanges, applyEdgeChanges, MarkerType} from "reactflow";
 import { v4 as uuid } from "uuid";
 import "reactflow/dist/style.css";
 import "./Canvas.css";
@@ -107,9 +107,22 @@ export default function DiagramCanvas({nodes,setNodes,edges,setEdges,onEchoEvent
 
         id: uuid(),
 
-        type: "control",
+        type: "smoothstep",
 
-        label
+        label,
+
+        markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: "#486C85"
+            
+
+        },
+
+        pathOptions: {
+            offset: 30,
+            borderRadius: 20,
+           
+        }
         };
 
         setEdges((eds) =>
